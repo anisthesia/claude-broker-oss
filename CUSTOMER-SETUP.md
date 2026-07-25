@@ -56,6 +56,21 @@ and never overwrites an existing secret. Run it once now (before the broker is u
 config; run it again after step 3 and it will also register starter channel schemas on the running
 broker. It prints the exact `claude mcp add` command for step 4 at the end — copy that.
 
+Included by default (each can be turned off):
+
+- **Code reviewer** — a read-only `reviewer` worker (`<ns>-reviewer` inbox) plus a sprint-close
+  review gate in the orchestrator role: the orchestrator dispatches a diff review and must not
+  merge on a `"block"` verdict. Disable with `--no-reviewer`.
+- **tmux mode** — if `tmux` is installed, `start_worker` launches each watchdog headless in a
+  named tmux window (`tmux attach -t claude-broker` to inspect; `--tmux-session <name>` to
+  rename, `--no-tmux` to run detached subprocesses instead).
+- **Persistent channels** — `<ns>-backlog` and `<ns>-sprint-retrospective` are exempted from
+  auto-pruning, giving the orchestrator durable deferred-task and sprint-history channels.
+- **MCP settings** (interactive prompt, or `--mcp-settings` / `--no-mcp-settings`) — writes the
+  broker connection into `<project>/.claude/settings.json` so sessions opened in the project get
+  the broker tools with no `claude mcp add`. Note this puts the secret in the project tree —
+  fine for a localhost broker on one machine; skip it for shared/remote setups.
+
 > Prefer to do it by hand? `cp .env.example .env`, then
 > `echo "SHARED_SECRET=$(openssl rand -hex 32)" >> .env`. **The broker refuses to start without a
 > secret** — a deliberate safety default.

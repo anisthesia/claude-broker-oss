@@ -15,6 +15,8 @@
  *   6. Prints the exact `claude mcp add` command to connect each session.
  *
  * Flags: --project <path>  --ns <prefix>  --port <n>  --no-schemas  --yes/-y
+ *        --scaffold-roles  --install-roles  --isolate  --multi-repo  --worktree-base <path>
+ *        --no-reviewer  --no-tmux  --tmux-session <name>  --mcp-settings / --no-mcp-settings
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -41,6 +43,10 @@ const opts = {
   multiRepo: has("--multi-repo"),
   worktreeBase: flag("--worktree-base"),
   rolesDir: flag("--roles-dir") || "roles",
+  reviewer: !has("--no-reviewer"),
+  tmux: !has("--no-tmux"),
+  tmuxSession: flag("--tmux-session"),
+  mcpSettings: has("--mcp-settings") ? true : has("--no-mcp-settings") ? false : null,
   yes: has("--yes", "-y"),
 };
 const interactive = !opts.yes && process.stdin.isTTY;
@@ -104,6 +110,14 @@ function detectRepos(dir) {
 
 const git = (cwd, ...args) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
 
+// Locate tmux so start_worker can launch each watchdog in a named tmux window
+// (tmux mode also auto-injects BROKER_SECRET into the watchdog environment).
+function findTmux() {
+  const r = spawnSync("which", ["tmux"], { encoding: "utf8" });
+  const p = (r.stdout || "").split("\n")[0].trim();
+  return r.status === 0 && p ? p : null;
+}
+
 // Give one repo an isolated worktree on branch worker/<name>, and exclude the per-worker
 // root CLAUDE.md from commits. Used in multi-repo mode (one worker per repo).
 function createRepoWorktree(repoPath, name, wtPath) {
@@ -153,7 +167,7 @@ function existingSecret() {
 }
 
 // ── schema registration (only if broker is reachable) ────────────────────────
-async function registerSchemas({ port, secret, ns, components }) {
+async function registerSchemas({ port, secret, ns, components, reviewer }) {
   const url = `http://localhost:${port}`;
   try {
     const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1500) });
@@ -171,6 +185,7 @@ async function registerSchemas({ port, secret, ns, components }) {
     [`${ns}-telemetry`, "telemetry.json"],
     [`${ns}-control`, "control.json"],
     ...components.map((comp) => [`${ns}-${comp}`, "worker-inbox.json"]),
+    ...(reviewer ? [[`${ns}-reviewer`, "worker-inbox.json"]] : []),
   ];
   const done = [];
   for (const [channel, file] of plan) {
@@ -184,8 +199,10 @@ async function registerSchemas({ port, secret, ns, components }) {
 // ── role scaffolding (optional) ──────────────────────────────────────────────
 // Generates starter CLAUDE.md-style role files: one orchestrator + one per worker.
 // Written to a local roles/ dir — never into the customer's project.
-function orchestratorRole({ project, ns, port, components }) {
-  const registry = components.map((w) => `| \`${w}\` | \`${ns}-${w}\` | the ${w} component |`).join("\n");
+function orchestratorRole({ project, ns, port, components, reviewer }) {
+  const registry = components.map((w) => `| \`${w}\` | \`${ns}-${w}\` | the ${w} component |`)
+    .concat(reviewer ? [`| \`reviewer\` | \`${ns}-reviewer\` | code review — reads diffs, posts findings, never edits files |`] : [])
+    .join("\n");
   const dispatch = components.map((w) => `\`${ns}-${w}\``).join(", ");
   const firstWorker = components[0] || "backend";
   return `# Orchestrator — ${basename(project)}
@@ -210,8 +227,10 @@ ${registry}
 - \`${ns}-orchestrator\` — your inbox (read every turn)
 - \`${ns}-control\` — broadcasts to all workers (send broadcasts here)
 - ${dispatch} — worker inboxes (dispatch tasks here)
-- \`${ns}-status\` — firehose: workers post results + status here (monitor this)
+${reviewer ? `- \`${ns}-reviewer\` — code reviewer inbox (dispatch review tasks here)\n` : ""}- \`${ns}-status\` — firehose: workers post results + status here (monitor this)
 - \`${ns}-telemetry\` — heartbeats (monitor for liveness with \`get_latest_heartbeats\`)
+- \`${ns}-backlog\` — persistent deferred tasks — **NEVER purge**
+- \`${ns}-sprint-retrospective\` — permanent sprint history — **NEVER purge**
 
 ## Turn-start ritual
 
@@ -270,8 +289,14 @@ Field discipline:
   \`acceptance_criteria\` item. If any is missing, dispatch a continuation task — do NOT close it.
 - **Before merging**: \`sprint_file_conflicts(status_channel="${ns}-status")\` — if two workers
   touched overlapping files, resolve it before the merge.
-- **Sprint close**: once results pass, merge each worker branch with \`sprint-close-merge.sh\`
-  (the setup output printed the exact command).
+${reviewer ? `- **Review gate**: before any sprint-close merge, dispatch a review task to \`${ns}-reviewer\`
+  (\`body: { "base": "main", "head": "HEAD", "checklist": ["Secrets", "File ownership", "Test coverage"] }\`),
+  then \`wait_for_messages(channel="${ns}-status", filter_sender="reviewer", filter_type="result", timeout_ms=300000)\`.
+  Verdict \`"block"\` → do NOT merge until blocking findings are fixed; \`"approve"\`/\`"advise"\` → proceed.
+` : ""}- **Sprint close**: once results pass${reviewer ? " and the reviewer approves" : ""}, merge each worker branch with
+  \`sprint-close-merge.sh\` (the setup output printed the exact command). Then post a sprint
+  retrospective to \`${ns}-sprint-retrospective\` (tasks completed, deferred items) and move open
+  items to \`${ns}-backlog\` before purging any channels.
 
 ## Rules
 
@@ -402,13 +427,95 @@ resumes from broker state.
 `;
 }
 
-function scaffoldRoles({ project, ns, port, components, rolesDir, interactive, isolate }) {
+function reviewerRole({ project, ns, port }) {
+  return `# Code Reviewer — ${basename(project)}
+
+## Identity
+
+You are the **CODE REVIEWER** for \`${basename(project)}\`. You examine git diffs and changed
+files, check for issues, and post structured findings to the orchestrator.
+
+You are **read-only**. You do **NOT** write code, edit files, or commit anything. You do not
+dispatch tasks; you receive review tasks and post findings. The project repo is at
+\`${project}\` — review it in place, never modify it.
+
+The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`).
+
+## Channels
+
+- \`${ns}-reviewer\` — your inbox (read first, every turn)
+- \`${ns}-control\` — orchestrator broadcasts (check every turn)
+- \`${ns}-status\` — post all findings + results here
+- \`${ns}-telemetry\` — post heartbeats here
+
+## Turn-start ritual
+
+1. \`turn_start(inbox_channel="${ns}-reviewer", telemetry_channel="${ns}-telemetry", worker="reviewer", ...)\`
+   — records a heartbeat and returns your pending inbox in one call.
+2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — pick up broadcasts.
+3. For each \`type: task\`:
+   - **Idempotency FIRST**: \`check_result(channel="${ns}-status", task_id=<id>)\`. If \`found: true\`,
+     post a \`type: note\` ("already reviewed — skipping") and move on.
+   - Otherwise perform the review (below).
+
+## Review protocol
+
+A review task's \`body\` contains: \`base\` (base ref), \`head\` (head ref), optional \`scope\`
+(paths to focus on), and \`checklist\` (project-specific rules to verify).
+
+1. \`git -C ${project} diff <base>..<head> --name-only\` — the changed-file list.
+2. \`git -C ${project} diff <base>..<head> -- <scope, if given>\` — the diff; Read files as needed.
+3. Check every item in \`body.checklist\` explicitly, plus this default checklist:
+   - **Secrets** — no hardcoded API keys, passwords, tokens, private keys
+   - **File ownership** — no worker edited files outside its declared component
+   - **Test coverage** — changed files have corresponding tests
+   - **No force-push markers** — no \`--no-verify\` / \`--force\` in scripts
+   - **No blocking TODO/FIXME** in changed lines
+
+## Reporting findings
+
+Post to \`${ns}-status\` (matches \`schemas/status.json\`):
+
+\`\`\`json
+{
+  "type": "result",
+  "task_id": "<the task_id you were given>",
+  "from": "reviewer",
+  "to": "orchestrator",
+  "subject": "<same subject as the task>",
+  "summary": "PASS — N files reviewed, no blocking issues",
+  "body": {
+    "consent_basis": "orchestrator-dispatch-only",
+    "verdict": "approve",
+    "files_reviewed": ["..."],
+    "findings": [
+      { "severity": "blocking", "file": "path", "line": 42, "issue": "…" },
+      { "severity": "advisory", "file": "path", "issue": "…" }
+    ],
+    "checklist_results": { "Secrets": "PASS", "File ownership": "PASS" }
+  }
+}
+\`\`\`
+
+- \`verdict\`: \`"approve"\` (no blocking issues) / \`"block"\` (merge must not proceed) /
+  \`"advise"\` (notable advisories only).
+- \`summary\`: \`"PASS — …"\` / \`"FAIL — N blocking issue(s): …"\` / \`"PASS (with advisories) — …"\`.
+
+## Idle — drain and exit (do NOT idle-poll)
+
+After posting a result, re-read your inbox and repeat until empty; then post a \`type: status\`
+exit note to \`${ns}-status\` and **exit**. The watchdog restarts you when new work arrives.
+`;
+}
+
+function scaffoldRoles({ project, ns, port, components, rolesDir, interactive, isolate, reviewer }) {
   const dir = resolve(OUT_DIR, rolesDir);
   mkdirSync(dir, { recursive: true });
   const written = [];
   const files = [
-    ["orchestrator.md", orchestratorRole({ project, ns, port, components })],
+    ["orchestrator.md", orchestratorRole({ project, ns, port, components, reviewer })],
     ...components.map((w) => [`${w}.md`, workerRole({ project, ns, port, worker: w, isolate })]),
+    ...(reviewer ? [["reviewer.md", reviewerRole({ project, ns, port })]] : []),
   ];
   for (const [name, content] of files) {
     const p = join(dir, name);
@@ -438,6 +545,40 @@ function installRoles({ baseDir, components, rolesDir }) {
     results.push({ comp, status: "installed", path: dest.replace(dirname(baseDir) + "/", "") });
   }
   return results;
+}
+
+// The reviewer has no component dir of its own — it lives in <project>/reviewer/ (created
+// here) and reviews the main checkout read-only, so it is safe in every isolation mode.
+function installReviewerRole({ project, rolesDir }) {
+  const src = resolve(OUT_DIR, rolesDir, "reviewer.md");
+  const destDir = join(project, "reviewer");
+  const dest = join(destDir, "CLAUDE.md");
+  if (!existsSync(src)) return { comp: "reviewer", status: "no role file" };
+  if (existsSync(dest)) return { comp: "reviewer", status: "skipped — CLAUDE.md exists" };
+  mkdirSync(destDir, { recursive: true });
+  writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
+  return { comp: "reviewer", status: "installed", path: dest.replace(dirname(project) + "/", "") };
+}
+
+// Wire the broker into a repo's .claude/settings.json (merge-preserving). Local-only:
+// the file carries the bearer secret, which is fine for a localhost broker.
+function writeMcpSettings(repoRoot, port, secret) {
+  const dir = join(repoRoot, ".claude");
+  const p = join(dir, "settings.json");
+  let cfg = {};
+  if (existsSync(p)) {
+    try { cfg = JSON.parse(readFileSync(p, "utf8")); }
+    catch { return { path: p, status: "skipped — existing file is not valid JSON" }; }
+  }
+  cfg.mcpServers = cfg.mcpServers || {};
+  cfg.mcpServers.broker = {
+    type: "http",
+    url: `http://localhost:${port}/mcp`,
+    headers: { Authorization: `Bearer ${secret}` },
+  };
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+  return { path: p, status: "written" };
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -497,6 +638,8 @@ async function main() {
   if (existsSync(envPath) && interactive) {
     writeEnv = await askYesNo(`.env exists${preserved ? " (secret will be kept)" : ""} — overwrite it?`, true);
   }
+  const tmuxBin = opts.tmux ? findTmux() : null;
+  const tmuxSession = opts.tmuxSession || "claude-broker";
   if (writeEnv) {
     const env = [
       `# Generated by \`npm run setup\` for ${basename(project)}`,
@@ -507,13 +650,19 @@ async function main() {
       `# Channel layout for this project`,
       `TELEMETRY_CHANNEL=${ns}-telemetry`,
       `RATE_LIMIT_CHANNEL=${ns}-rate-limits`,
-      `PRUNE_EXEMPT=${ns}-backlog`,
+      `PRUNE_EXEMPT=${ns}-backlog,${ns}-sprint-retrospective`,
       ``,
       `# Worker roster (list_workers reads this).`,
       `WORKERS_CONFIG=./workers.json`,
       `# Supervisor that start_worker spawns to run workers autonomously (ships with the broker).`,
       `# See docs/DEPLOYMENT.md#worker-supervision.`,
       `WATCHDOG_BIN=${join(SCRIPT_DIR, "watchdog.sh")}`,
+      ...(tmuxBin ? [
+        ``,
+        `# Workers run headless in tmux windows; BROKER_SECRET is auto-injected per watchdog.`,
+        `WORKERS_TMUX_SESSION=${tmuxSession}`,
+        `TMUX_BIN=${tmuxBin}`,
+      ] : []),
       ``,
     ].join("\n");
     writeFileSync(envPath, env, "utf8");
@@ -553,6 +702,8 @@ async function main() {
       ? [comp, "--work-dir", join(worktreeBase, comp), "--inbox-channel", `${ns}-${comp}`]
       : [comp, "--repo-root", project, "--inbox-channel", `${ns}-${comp}`],
   }));
+  // The reviewer always runs against the main checkout (read-only), never a worktree.
+  if (opts.reviewer) workers.push({ name: "reviewer", ns, args: ["reviewer", "--repo-root", project, "--inbox-channel", `${ns}-reviewer`] });
   const workersPath = join(OUT_DIR, "workers.json");
   let writeWorkers = true;
   if (existsSync(workersPath) && interactive) writeWorkers = await askYesNo("workers.json exists — overwrite it?", true);
@@ -560,13 +711,13 @@ async function main() {
 
   // 7. Register starter schemas (best-effort, only if broker is up)
   let schemaResult = { ran: false, reason: "skipped (--no-schemas)" };
-  if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components });
+  if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components, reviewer: opts.reviewer });
 
   // 7b. Scaffold role files. --install-roles, --isolate, --multi-repo all imply scaffolding.
   let roles = null;
   const wantScaffold = opts.scaffoldRoles || opts.installRoles || useWorktrees ||
     (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)));
-  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: useWorktrees });
+  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: useWorktrees, reviewer: opts.reviewer });
 
   // 7c. Install worker role files as CLAUDE.md where each session runs.
   // Worktree modes → the worktree root (auto). Otherwise → the project's component dir (opt-in).
@@ -574,18 +725,37 @@ async function main() {
   const installBase = useWorktrees ? worktreeBase : project;
   const doInstall = useWorktrees || opts.installRoles ||
     (interactive && (await askYesNo(`Install worker roles as CLAUDE.md into ${basename(project)}/<component>/? (writes into the project)`, false)));
-  if (roles && doInstall) installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir });
+  if (roles && doInstall) {
+    installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir });
+    if (opts.reviewer) installed.push(installReviewerRole({ project, rolesDir: opts.rolesDir }));
+  }
+
+  // 7d. Wire the broker into the project's .claude/settings.json so sessions opened
+  // there get the mcp__broker__* tools with no manual `claude mcp add`.
+  let mcpWritten = null;
+  const doMcp = opts.mcpSettings === true ||
+    (opts.mcpSettings !== false && interactive &&
+      (await askYesNo(`Write broker MCP config into ${basename(project)}/.claude/settings.json? (writes the secret into the project — fine for a local broker)`, true)));
+  if (doMcp) {
+    const targets = opts.multiRepo ? components.map(repoPathFor) : [project];
+    mcpWritten = targets.map((t) => writeMcpSettings(t, port, secret));
+  }
 
   if (rl) rl.close();
 
   // 8. Summary
-  const channels = [`${ns}-status`, `${ns}-control`, `${ns}-telemetry`, ...components.map((x) => `${ns}-${x}`)];
+  const channels = [
+    `${ns}-status`, `${ns}-control`, `${ns}-telemetry`,
+    ...components.map((x) => `${ns}-${x}`),
+    ...(opts.reviewer ? [`${ns}-reviewer`] : []),
+    `${ns}-backlog`, `${ns}-sprint-retrospective`,
+  ];
   line();
   line(c.g("✓ Setup complete"));
   line();
   line(`  ${c.b("Project")}     ${project}`);
   line(`  ${c.b("Namespace")}   ${ns}`);
-  line(`  ${c.b("Components")}  ${components.join(", ")}`);
+  line(`  ${c.b("Components")}  ${components.join(", ")}${opts.reviewer ? " (+ reviewer)" : ""}`);
   line(`  ${c.b("Wrote")}       ${writeEnv ? ".env" : "(kept .env)"}, ${writeWorkers ? "workers.json" : "(kept workers.json)"}`);
   line(`  ${c.b("Channels")}    ${channels.join(", ")}`);
   if (opts.multiRepo) {
@@ -620,15 +790,31 @@ async function main() {
     const skipped = installed.filter((r) => r.status !== "installed");
     if (ok.length) line(`  ${c.g("✓")} Installed ${ok.length} worker role file(s) into the project: ${ok.map((r) => r.path).join(", ")}`);
     for (const s of skipped) line(`  ${c.y("•")} ${s.comp}: ${s.status}`);
-    line(`    ${c.dim("Orchestrator role stays in roles/orchestrator.md — use it for the orchestrating session.")}`);
+    line(`    ${c.dim("Orchestrator role stays in roles/orchestrator.md — run the orchestrator interactively with it (not headless).")}`);
+  }
+  if (tmuxBin) {
+    line(`  ${c.g("✓")} tmux mode on — start_worker launches each watchdog in tmux session ${c.b(tmuxSession)} (inspect: ${c.b(`tmux attach -t ${tmuxSession}`)}).`);
+  } else if (opts.tmux) {
+    line(`  ${c.y("•")} tmux not found — workers will run as detached subprocesses (logs in WORKERS_LOG_DIR). Install tmux and re-run to enable tmux windows.`);
+  }
+  if (mcpWritten) {
+    for (const w of mcpWritten) {
+      line(`  ${w.status === "written" ? c.g("✓") : c.y("•")} MCP settings ${w.status}: ${w.path}`);
+    }
   }
   line();
   line(c.b("  Next steps:"));
   line(`    1. Start the broker:   ${c.b("npm start")}`);
-  line(`    2. Connect each Claude Code session (run inside each project):`);
-  line();
-  line(c.dim(`       claude mcp add --transport http broker http://localhost:${port}/mcp \\`));
-  line(c.dim(`         --header "Authorization: Bearer ${secret}"`));
+  if (mcpWritten && mcpWritten.some((w) => w.status === "written")) {
+    line(`    2. Sessions opened inside the project pick up the broker automatically (.claude/settings.json).`);
+    line(c.dim(`       For sessions elsewhere: claude mcp add --transport http broker http://localhost:${port}/mcp \\`));
+    line(c.dim(`         --header "Authorization: Bearer ${secret}"`));
+  } else {
+    line(`    2. Connect each Claude Code session (run inside each project):`);
+    line();
+    line(c.dim(`       claude mcp add --transport http broker http://localhost:${port}/mcp \\`));
+    line(c.dim(`         --header "Authorization: Bearer ${secret}"`));
+  }
   line();
   line(`    3. Verify:             ${c.b(`curl -s localhost:${port}/health`)}`);
   line(`    4. Dashboard:          ${c.b(`http://localhost:${port}/dashboard`)}  (token: the secret above)`);
