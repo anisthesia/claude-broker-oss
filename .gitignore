@@ -17,5 +17,8 @@ worker-logs/
 # Local worker config (copy workers.example.json → workers.json)
 workers.json
 
+# Generated per-project role files (npm run setup --scaffold-roles)
+roles/
+
 # OS / editor cruft
 .DS_Store

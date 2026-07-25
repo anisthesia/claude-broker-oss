@@ -16,7 +16,7 @@
  *
  * Flags: --project <path>  --ns <prefix>  --port <n>  --no-schemas  --yes/-y
  */
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,8 @@ const opts = {
   ns: flag("--ns"),
   port: flag("--port"),
   schemas: !has("--no-schemas"),
+  scaffoldRoles: has("--scaffold-roles"),
+  rolesDir: flag("--roles-dir") || "roles",
   yes: has("--yes", "-y"),
 };
 const interactive = !opts.yes && process.stdin.isTTY;
@@ -127,6 +129,150 @@ async function registerSchemas({ port, secret, ns, components }) {
   return { ran: true, done };
 }
 
+// ── role scaffolding (optional) ──────────────────────────────────────────────
+// Generates starter CLAUDE.md-style role files: one orchestrator + one per worker.
+// Written to a local roles/ dir — never into the customer's project.
+function orchestratorRole({ project, ns, port, components }) {
+  const registry = components.map((w) => `| \`${w}\` | \`${ns}-${w}\` | the ${w} component |`).join("\n");
+  const dispatch = components.map((w) => `\`${ns}-${w}\``).join(", ");
+  return `# Orchestrator — ${basename(project)}
+
+## Identity
+
+You are the **ORCHESTRATOR** for \`${basename(project)}\`. You manage a team of ${components.length} worker session(s).
+You plan the work, split it into tasks, dispatch them to workers, watch for results and
+conflicts, and gate merges. You do **NOT** write feature code yourself — you coordinate.
+
+The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`); its tools are
+available (\`send_message\`, \`read_messages\`, \`wait_for_messages\`, \`check_result\`, \`sprint_summary\`, …).
+
+## Worker registry
+
+| Worker | Inbox channel | Owns |
+|---|---|---|
+${registry}
+
+## Channels
+
+- \`${ns}-orchestrator\` — your inbox (read every turn)
+- \`${ns}-control\` — broadcasts to all workers (send broadcasts here)
+- ${dispatch} — worker inboxes (dispatch tasks here)
+- \`${ns}-status\` — firehose: workers post results + status here (monitor this)
+- \`${ns}-telemetry\` — heartbeats (monitor for liveness with \`get_latest_heartbeats\`)
+
+## Turn-start ritual
+
+At the start of every turn, before anything else:
+
+1. \`read_messages(channel="${ns}-orchestrator", since_id=<last>)\` — your inbox.
+2. \`read_messages(channel="${ns}-status", since_id=<last>)\` — new results/status.
+3. Update your task ledger (\`task_id → {worker, status}\`) from any \`type: result\` messages.
+4. Answer any \`type: question\` addressed to you first — that worker is blocked.
+
+## Dispatching a task
+
+Send to the target worker's inbox. Envelope (matches \`schemas/worker-inbox.json\`):
+
+\`\`\`json
+{
+  "type": "task",
+  "task_id": "add-analytics-2026-07-25-endpoint",
+  "from": "orchestrator",
+  "to": "${components[0] || "backend"}",
+  "subject": "One-line summary of the task",
+  "context": "One sentence on why this task exists.",
+  "body": { "detail": "What to build, acceptance criteria, constraints." }
+}
+\`\`\`
+
+\`send_message(channel="${ns}-${components[0] || "backend"}", sender="orchestrator", content=<the JSON above as a string>)\`
+
+## Collecting results
+
+- \`check_result(channel="${ns}-status", task_id="…")\` — one task's latest result.
+- \`sprint_summary(status_channel="${ns}-status")\` — dispatched/completed/failed/pending counts.
+
+## Rules
+
+- One atomic task per dispatch. Don't give a worker two unrelated things at once.
+- Never \`purge_channel\` without explicit human confirmation (use AskUserQuestion).
+- Sequence work so two workers don't edit the same files in the same sprint.
+`;
+}
+
+function workerRole({ project, ns, port, worker }) {
+  return `# ${worker} Worker — ${basename(project)}
+
+## Identity
+
+You are the **${worker.toUpperCase()} WORKER** for \`${basename(project)}\`. You own the \`${worker}\`
+component of the project. You **receive** tasks from the orchestrator and report results — you do
+**not** dispatch work to others, and you stay within your component's files.
+
+The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`).
+
+## Channels
+
+- \`${ns}-${worker}\` — your inbox (read first, every turn)
+- \`${ns}-control\` — orchestrator broadcasts (check every turn)
+- \`${ns}-status\` — post all results + status here
+- \`${ns}-telemetry\` — post heartbeats here
+
+## Turn-start ritual
+
+1. \`turn_start(inbox_channel="${ns}-${worker}", telemetry_channel="${ns}-telemetry", worker="${worker}", …)\`
+   — records a heartbeat and returns your pending inbox in one call.
+   (Or, manually: \`read_messages(channel="${ns}-${worker}", since_id=<last>)\` +
+   \`upsert_heartbeat(channel="${ns}-telemetry", sender="${worker}", content=…)\`.)
+2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — pick up broadcasts.
+3. If your inbox has a \`type: task\`, work it. If you're blocked, post a \`type: question\`
+   to \`${ns}-status\` addressed to the orchestrator and stop.
+
+## Reporting a result
+
+When a task is done, post to \`${ns}-status\`. Envelope (matches \`schemas/status.json\`):
+
+\`\`\`json
+{
+  "type": "result",
+  "task_id": "<the task_id you were given>",
+  "from": "${worker}",
+  "to": "orchestrator",
+  "subject": "One-line summary",
+  "summary": "PASS — <=30 words on what changed",
+  "body": { "consent_basis": "orchestrator-dispatch-only", "commits": [{ "sha": "…", "branch": "main" }] },
+  "affected_files": ["${worker}/path/to/changed_file"]
+}
+\`\`\`
+
+\`send_message(channel="${ns}-status", sender="${worker}", content=<the JSON above as a string>)\`
+
+## Rules
+
+- Stay in your component (\`${worker}/\`). If a task needs another component's files, post a
+  \`type: question\` to the orchestrator instead of reaching across.
+- Every \`type: result\` needs a \`summary\` starting with \`PASS —\` / \`FAIL —\` / \`SKIP —\`.
+- Run the component's tests/build before reporting PASS.
+`;
+}
+
+function scaffoldRoles({ project, ns, port, components, rolesDir, interactive }) {
+  const dir = resolve(OUT_DIR, rolesDir);
+  mkdirSync(dir, { recursive: true });
+  const written = [];
+  const files = [
+    ["orchestrator.md", orchestratorRole({ project, ns, port, components })],
+    ...components.map((w) => [`${w}.md`, workerRole({ project, ns, port, worker: w })]),
+  ];
+  for (const [name, content] of files) {
+    const p = join(dir, name);
+    if (existsSync(p) && interactive) { /* keep it simple: overwrite in scaffold */ }
+    writeFileSync(p, content, "utf8");
+    written.push(join(rolesDir, name));
+  }
+  return { dir: rolesDir, written };
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 async function main() {
   line();
@@ -204,6 +350,12 @@ async function main() {
   let schemaResult = { ran: false, reason: "skipped (--no-schemas)" };
   if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components });
 
+  // 7b. Scaffold role files (opt-in)
+  let roles = null;
+  if (opts.scaffoldRoles || (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)))) {
+    roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive });
+  }
+
   if (rl) rl.close();
 
   // 8. Summary
@@ -223,6 +375,10 @@ async function main() {
   } else {
     line(`  ${c.y("•")} Schemas not registered — ${schemaResult.reason}.`);
     line(`    Start the broker (${c.b("npm start")}), then re-run ${c.b("npm run setup")} to register them.`);
+  }
+  if (roles) {
+    line(`  ${c.g("✓")} Scaffolded ${roles.written.length} role files in ${c.b(roles.dir + "/")} (orchestrator + ${components.length} worker${components.length === 1 ? "" : "s"}).`);
+    line(`    ${c.dim("Use each file as the CLAUDE.md / system prompt for that session (see below).")}`);
   }
   line();
   line(c.b("  Next steps:"));

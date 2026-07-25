@@ -150,6 +150,20 @@ set `WORKERS_CONFIG=./workers.json` and `WATCHDOG_BIN=<their supervisor script>`
 restart. Most first customers can skip this entirely — plain messaging between sessions is the
 core feature. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#worker-supervision).
 
+### Starter role files (optional)
+
+Add `--scaffold-roles` to the setup wizard to generate ready-to-use agent instructions:
+
+```bash
+npm run setup -- --project /path/to/project --scaffold-roles
+```
+
+This writes a `roles/` folder with one `orchestrator.md` and one `<component>.md` per worker. Each
+file defines that session's identity, its channels, a turn-start ritual, and the exact task/result
+envelope to use (the examples are validated against the strict schemas). Use each file as the
+`CLAUDE.md` in the directory where you run that session — or paste it as the session's opening
+instructions. This is the fastest way to get the orchestrator and workers behaving consistently.
+
 ---
 
 ## Gotchas checklist
