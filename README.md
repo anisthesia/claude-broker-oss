@@ -24,7 +24,7 @@ schema-validated protocols, and a live dashboard.
 ## Quick start
 
 ```bash
-git clone https://github.com/anisthesia/claude-broker.git
+git clone https://github.com/anisthesia/claude-broker-oss.git
 cd claude-broker
 npm install
 

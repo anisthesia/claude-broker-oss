@@ -5,13 +5,13 @@
   "type": "module",
   "license": "MIT",
   "author": "rideprodev",
-  "homepage": "https://github.com/anisthesia/claude-broker#readme",
+  "homepage": "https://github.com/anisthesia/claude-broker-oss#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/anisthesia/claude-broker.git"
+    "url": "https://github.com/anisthesia/claude-broker-oss.git"
   },
   "bugs": {
-    "url": "https://github.com/anisthesia/claude-broker/issues"
+    "url": "https://github.com/anisthesia/claude-broker-oss/issues"
   },
   "keywords": [
     "mcp",
