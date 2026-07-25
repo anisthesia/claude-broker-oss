@@ -100,7 +100,7 @@ messages are rejected (or warned about). Example schemas — a task/result worke
 in [`schemas/`](schemas/); see [`schemas/README.md`](schemas/README.md).
 
 ```
-register_channel_schema(channel="team-backend", schema=<json-schema>, mode="strict")
+register_channel_schema(channel="team-backend", schema=<json-schema>, strict=true)
 ```
 
 ## Worker supervision (optional, advanced)

@@ -53,7 +53,7 @@ created implicitly on first write; there is no separate "create channel" step.
 
 | Tool | Purpose |
 |---|---|
-| `register_channel_schema` | Attach a JSON Schema to a channel. `mode` = `strict` (reject) or `warn` (log only). |
+| `register_channel_schema` | Attach a JSON Schema to a channel. `strict: true` rejects non-conforming messages; `strict: false` (default) logs a warning only. Optional `version` string. |
 | `get_channel_schema` | Fetch the schema registered on a channel. |
 | `list_channel_schemas` | List all channels that have a schema. |
 | `clear_channel_schema` | Remove a channel's schema. |

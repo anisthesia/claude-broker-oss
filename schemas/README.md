@@ -20,7 +20,7 @@ posting results, and heartbeat/telemetry on the side.
 register_channel_schema(
   channel = "team-backend",
   schema  = <contents of schemas/worker-inbox.json>,
-  mode    = "strict"     # "strict" rejects non-conforming messages; "warn" only logs
+  strict  = true         # true rejects non-conforming messages; false (default) only logs a warning
 )
 ```
 
@@ -31,4 +31,4 @@ one at any time with `register_channel_schema` / `clear_channel_schema`.
 
 Any [draft-07](https://json-schema.org/) schema works (Ajv with `ajv-formats`). Start from these
 files, rename the channels to your namespace, and adjust the `enum`s and required fields to your
-protocol. Register in `warn` mode first to see what would be rejected, then switch to `strict`.
+protocol. Register with `strict: false` first to see what would be rejected, then switch to `strict: true`.
