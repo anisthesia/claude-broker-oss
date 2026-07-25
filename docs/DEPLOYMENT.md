@@ -179,6 +179,26 @@ an `origin` remote exists), then resets every worktree to the new main HEAD for 
 Skip `--isolate` when workers only read/coordinate or edit disjoint directories — a shared checkout
 is simpler and fine there.
 
+### Multi-repo (polyrepo)
+
+If your "project" is a folder of **separate git repositories** (one per service), use:
+
+```bash
+npm run setup -- --project /path/to/folder-of-repos --multi-repo
+```
+
+Each immediate sub-directory that is its own git repo becomes a worker, with a worktree of *that
+repo* on a `worker/<name>` branch (created under `<project>/.claude-worktrees/<name>`); non-repo
+directories are ignored. Because the repos are independent, sprint-close runs **once per repo**
+(the wizard prints the exact commands):
+
+```bash
+./sprint-close-merge.sh --project /path/to/folder-of-repos/api --worktree-base /path/to/folder-of-repos/.claude-worktrees api
+./sprint-close-merge.sh --project /path/to/folder-of-repos/web --worktree-base /path/to/folder-of-repos/.claude-worktrees web
+```
+
+Each repo needs at least one commit; the wizard reports and stops if one doesn't.
+
 **`watchdog.sh` options** (passed via each worker's `args` in `workers.json`):
 `--repo-root <path>`, `--inbox-channel <channel>` (required), `--patrol-interval <seconds>` for
 always-on workers, `--max-session-minutes <n>` (default 45). Env: `CLAUDE_BIN`, `CLAUDE_MODEL`

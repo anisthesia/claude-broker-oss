@@ -38,6 +38,7 @@ const opts = {
   scaffoldRoles: has("--scaffold-roles"),
   installRoles: has("--install-roles"),
   isolate: has("--isolate"),
+  multiRepo: has("--multi-repo"),
   worktreeBase: flag("--worktree-base"),
   rolesDir: flag("--roles-dir") || "roles",
   yes: has("--yes", "-y"),
@@ -86,6 +87,53 @@ function detectComponents(projectPath) {
     if (looksLikeComponent) comps.push(name);
   }
   return comps;
+}
+
+// Multi-repo (polyrepo): each immediate subdirectory that is its own git repo is a worker.
+function detectRepos(dir) {
+  let entries; try { entries = readdirSync(dir); } catch { return []; }
+  const repos = [];
+  for (const name of entries) {
+    if (name.startsWith(".") || IGNORE.has(name)) continue;
+    const p = join(dir, name);
+    let s; try { s = statSync(p); } catch { continue; }
+    if (s.isDirectory() && existsSync(join(p, ".git"))) repos.push(name);
+  }
+  return repos;
+}
+
+const git = (cwd, ...args) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+
+// Give one repo an isolated worktree on branch worker/<name>, and exclude the per-worker
+// root CLAUDE.md from commits. Used in multi-repo mode (one worker per repo).
+function createRepoWorktree(repoPath, name, wtPath) {
+  const branch = `worker/${name}`;
+  if (git(repoPath, "rev-parse", "HEAD").status !== 0) return { name, status: "skipped — repo has no commits" };
+  const listed = (git(repoPath, "worktree", "list", "--porcelain").stdout || "").split("\n");
+  if (listed.includes(`worktree ${wtPath}`)) { ensureExclude(repoPath); return { name, status: "exists", wtPath, branch }; }
+  if (existsSync(wtPath)) return { name, status: "skipped — path exists (not a worktree)" };
+  const hasBranch = git(repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`).status === 0;
+  const base = (git(repoPath, "branch", "--show-current").stdout || "").trim() || "HEAD";
+  const r = hasBranch
+    ? git(repoPath, "worktree", "add", wtPath, branch)
+    : git(repoPath, "worktree", "add", "-b", branch, wtPath, base);
+  if (r.status !== 0) return { name, status: `failed: ${(r.stderr || "").trim().slice(0, 80)}` };
+  ensureExclude(repoPath);
+  return { name, status: "created", wtPath, branch, base };
+}
+
+function ensureExclude(repoPath) {
+  let common = (git(repoPath, "rev-parse", "--git-common-dir").stdout || "").trim();
+  if (!common) return;
+  if (!common.startsWith("/")) common = join(repoPath, common);
+  const ex = join(common, "info", "exclude");
+  try {
+    mkdirSync(dirname(ex), { recursive: true });
+    const cur = existsSync(ex) ? readFileSync(ex, "utf8") : "";
+    if (!cur.split("\n").includes("/CLAUDE.md")) {
+      writeFileSync(ex, cur + "\n# claude-broker: per-worker role file — never commit\n/CLAUDE.md\n");
+    }
+  } catch { /* best effort */ }
 }
 
 const sanitizeName = (n) => n.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 64) || "app";
@@ -328,17 +376,31 @@ async function main() {
     line(c.y(`Not a directory: ${project}`)); process.exit(1);
   }
 
-  // 2. Components
-  let components = detectComponents(project).map(sanitizeName);
-  if (components.length) {
-    line(`  Detected components: ${c.b(components.join(", "))}`);
-    if (interactive && !(await askYesNo("Use these?", true))) {
-      const custom = await ask("Enter components (comma-separated)", components.join(","));
+  // 2. Components — in multi-repo mode, each sub-repo is a worker (and maps to its own repo path).
+  let components, repoPathFor = null;
+  if (opts.multiRepo) {
+    const repos = detectRepos(project);
+    if (!repos.length) {
+      line(c.y(`  No git repositories found directly under ${project}. --multi-repo expects a folder of repos.`));
+      if (rl) rl.close(); process.exit(1);
+    }
+    const map = {};
+    for (const r of repos) map[sanitizeName(r)] = join(project, r);
+    components = Object.keys(map);
+    repoPathFor = (name) => map[name];
+    line(`  Detected repos: ${c.b(components.join(", "))}`);
+  } else {
+    components = detectComponents(project).map(sanitizeName);
+    if (components.length) {
+      line(`  Detected components: ${c.b(components.join(", "))}`);
+      if (interactive && !(await askYesNo("Use these?", true))) {
+        const custom = await ask("Enter components (comma-separated)", components.join(","));
+        components = custom.split(",").map((s) => sanitizeName(s.trim())).filter(Boolean);
+      }
+    } else {
+      const custom = await ask("No components auto-detected — enter them (comma-separated)", "app");
       components = custom.split(",").map((s) => sanitizeName(s.trim())).filter(Boolean);
     }
-  } else {
-    const custom = await ask("No components auto-detected — enter them (comma-separated)", "app");
-    components = custom.split(",").map((s) => sanitizeName(s.trim())).filter(Boolean);
   }
   components = [...new Set(components)];
 
@@ -378,10 +440,23 @@ async function main() {
     writeFileSync(envPath, env, "utf8");
   }
 
-  // 5b. Isolation mode: give each worker its own git worktree + branch (worker/<name>),
-  // so concurrent workers can never clobber each other on a shared checkout.
+  // 5b. Git isolation. Two shapes:
+  //   --isolate     : one repo, N worktrees (each worker a worktree of the same repo).
+  //   --multi-repo  : N repos, each worker gets a worktree of ITS OWN repo.
+  const useWorktrees = opts.isolate || opts.multiRepo;
   let worktreeBase = null;
-  if (opts.isolate) {
+  if (opts.multiRepo) {
+    worktreeBase = opts.worktreeBase ? resolve(opts.worktreeBase) : join(project, ".claude-worktrees");
+    mkdirSync(worktreeBase, { recursive: true });
+    line(`\n  Multi-repo mode — one worktree per repo under ${c.b(worktreeBase)}`);
+    let failed = false;
+    for (const comp of components) {
+      const res = createRepoWorktree(repoPathFor(comp), comp, join(worktreeBase, comp));
+      line(`    ${res.status.startsWith("created") || res.status === "exists" ? c.g("✓") : c.y("•")} ${comp} → ${res.status}${res.wtPath ? ` (${res.branch})` : ""}`);
+      if (res.status.startsWith("failed") || res.status.startsWith("skipped")) failed = true;
+    }
+    if (failed) { line(c.y("  Some repos could not be isolated — fix them (each needs ≥1 commit) and re-run.")); if (rl) rl.close(); process.exit(1); }
+  } else if (opts.isolate) {
     worktreeBase = opts.worktreeBase ? resolve(opts.worktreeBase) : join(dirname(project), `${basename(project)}-workers`);
     line(`\n  Isolation mode — creating a git worktree per worker under ${c.b(worktreeBase)}`);
     const r = spawnSync("bash", [join(SCRIPT_DIR, "worktree-setup.sh"), "--project", project, "--worktree-base", worktreeBase, ...components], { stdio: "inherit" });
@@ -392,10 +467,10 @@ async function main() {
     }
   }
 
-  // 6. Write workers.json — isolate mode points each worker at its own worktree.
+  // 6. Write workers.json — worktree modes point each worker at its own worktree.
   const workers = components.map((comp) => ({
     name: comp, ns,
-    args: opts.isolate
+    args: useWorktrees
       ? [comp, "--work-dir", join(worktreeBase, comp), "--inbox-channel", `${ns}-${comp}`]
       : [comp, "--repo-root", project, "--inbox-channel", `${ns}-${comp}`],
   }));
@@ -408,17 +483,17 @@ async function main() {
   let schemaResult = { ran: false, reason: "skipped (--no-schemas)" };
   if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components });
 
-  // 7b. Scaffold role files. --install-roles and --isolate both imply scaffolding.
+  // 7b. Scaffold role files. --install-roles, --isolate, --multi-repo all imply scaffolding.
   let roles = null;
-  const wantScaffold = opts.scaffoldRoles || opts.installRoles || opts.isolate ||
+  const wantScaffold = opts.scaffoldRoles || opts.installRoles || useWorktrees ||
     (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)));
-  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: opts.isolate });
+  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: useWorktrees });
 
   // 7c. Install worker role files as CLAUDE.md where each session runs.
-  // Isolate mode → the worktree root (auto). Otherwise → the project's component dir (opt-in).
+  // Worktree modes → the worktree root (auto). Otherwise → the project's component dir (opt-in).
   let installed = null;
-  const installBase = opts.isolate ? worktreeBase : project;
-  const doInstall = opts.isolate || opts.installRoles ||
+  const installBase = useWorktrees ? worktreeBase : project;
+  const doInstall = useWorktrees || opts.installRoles ||
     (interactive && (await askYesNo(`Install worker roles as CLAUDE.md into ${basename(project)}/<component>/? (writes into the project)`, false)));
   if (roles && doInstall) installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir });
 
@@ -434,11 +509,19 @@ async function main() {
   line(`  ${c.b("Components")}  ${components.join(", ")}`);
   line(`  ${c.b("Wrote")}       ${writeEnv ? ".env" : "(kept .env)"}, ${writeWorkers ? "workers.json" : "(kept workers.json)"}`);
   line(`  ${c.b("Channels")}    ${channels.join(", ")}`);
-  if (opts.isolate) {
+  if (opts.multiRepo) {
+    line(`  ${c.b("Isolation")}   multi-repo: one worktree per repo under ${worktreeBase} (branch worker/<name>)`);
+  } else if (opts.isolate) {
     line(`  ${c.b("Isolation")}   git worktree per worker under ${worktreeBase} (branch worker/<name>)`);
   }
   line();
-  if (opts.isolate) {
+  if (opts.multiRepo) {
+    line(`  ${c.g("✓")} Each worker owns its own repo, isolated on branch worker/<name> — safe for concurrent work.`);
+    line(`    ${c.dim("At sprint close, merge each repo independently:")}`);
+    for (const comp of components) {
+      line(`    ${c.dim(`  ./sprint-close-merge.sh --project ${repoPathFor(comp)} --worktree-base ${worktreeBase} ${comp}`)}`);
+    }
+  } else if (opts.isolate) {
     line(`  ${c.g("✓")} Each worker has an isolated worktree on its own branch — safe for concurrent code changes.`);
     line(`    ${c.dim(`Merge a sprint back to main with:  ./sprint-close-merge.sh --project ${project} ${components.join(" ")}`)}`);
   }

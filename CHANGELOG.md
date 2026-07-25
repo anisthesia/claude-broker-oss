@@ -6,6 +6,10 @@ All notable changes to this project are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **Multi-repo (polyrepo) support.** `npm run setup --multi-repo` treats a folder of separate git
+  repos as the project: each sub-repo becomes a worker with a worktree of *its own* repo on a
+  `worker/<name>` branch. `sprint-close-merge.sh` is run once per repo to integrate each
+  independently. Non-repo directories are ignored.
 - **Git isolation for concurrent workers.** `npm run setup --isolate` gives each worker its own
   git worktree on a `worker/<name>` branch, so parallel workers can't clobber each other on a
   shared checkout. Ships two scripts: `worktree-setup.sh` (creates the worktrees) and
