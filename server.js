@@ -341,7 +341,14 @@ function spawnWatchdogProc(def, { model } = {}) {
   mkdirSync(WORKERS_LOG_DIR, { recursive: true });
   const outFd = openSync(`${WORKERS_LOG_DIR}/${def.name}.out.log`, "a");
   const errFd = openSync(`${WORKERS_LOG_DIR}/${def.name}.err.log`, "a");
-  const env = model ? { ...process.env, CLAUDE_MODEL: model } : process.env;
+  // Give the watchdog the credentials it needs to reach an authenticated broker
+  // (/inbox polling + heartbeat writes). Existing env values win if already set.
+  const env = {
+    ...process.env,
+    BROKER_URL: process.env.BROKER_URL || `http://localhost:${PORT}`,
+    BROKER_SECRET: process.env.BROKER_SECRET || SHARED_SECRET,
+    ...(model ? { CLAUDE_MODEL: model } : {}),
+  };
   let proc;
   try {
     proc = spawn(WATCHDOG_BIN, expandArgs(def.args || []), { stdio: ["ignore", outFd, errFd], detached: true, env });

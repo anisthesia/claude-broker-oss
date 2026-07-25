@@ -328,9 +328,11 @@ async function main() {
       `RATE_LIMIT_CHANNEL=${ns}-rate-limits`,
       `PRUNE_EXEMPT=${ns}-backlog`,
       ``,
-      `# Worker roster (list_workers reads this). Set WATCHDOG_BIN too if you want`,
-      `# the broker to actually start/stop worker processes — see docs/DEPLOYMENT.md.`,
+      `# Worker roster (list_workers reads this).`,
       `WORKERS_CONFIG=./workers.json`,
+      `# Supervisor that start_worker spawns to run workers autonomously (ships with the broker).`,
+      `# See docs/DEPLOYMENT.md#worker-supervision.`,
+      `WATCHDOG_BIN=${join(SCRIPT_DIR, "watchdog.sh")}`,
       ``,
     ].join("\n");
     writeFileSync(envPath, env, "utf8");

@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`watchdog.sh`** — a bundled worker supervisor. `start_worker` now spawns autonomous,
+  on-demand worker sessions out of the box (poll inbox → launch on pending work → drain → exit →
+  restart), with rate-limit backoff, a max-session ceiling, a concurrency cap, and heartbeats.
+  `npm run setup` wires `WATCHDOG_BIN` automatically. Depends only on `node` + `curl`.
+
+### Changed
+- Subprocess-mode workers now receive `BROKER_URL` and `BROKER_SECRET` from the broker, so the
+  watchdog can poll the now-authenticated `/inbox` and post heartbeats.
+
 ## [2.1.0] — 2026-07-25
 
 First public release. Hardened and cleaned for general use.

@@ -127,19 +127,37 @@ destructive migration step, so rolling forward is safe; keep a pre-upgrade backu
 
 ## Worker supervision
 
-*Optional and advanced.* The broker can start/stop long-running agent processes so an
-orchestrator agent can bring workers up and down over MCP. It stays completely dormant unless
-you configure it.
+The broker can start and stop long-running agent processes so an orchestrator can bring workers up
+and down over MCP — turning a set of channels into an **autonomous, hands-off worker fleet**. It
+stays dormant unless configured. `npm run setup` configures it for you (it sets `WATCHDOG_BIN` to
+the bundled watchdog and writes `workers.json`).
 
-**How it works.** `start_worker(name)` looks up `name` in the JSON file at `WORKERS_CONFIG`
-and spawns `WATCHDOG_BIN` with that entry's `args`. `WATCHDOG_BIN` is **your** supervisor
-executable — the contract is only "a program that takes these args and runs a worker until
-killed." Two spawn modes:
+**How it works.** `start_worker(name)` looks up `name` in the JSON file at `WORKERS_CONFIG` and
+spawns `WATCHDOG_BIN` with that entry's `args`. The broker ships a ready-to-use supervisor,
+**`watchdog.sh`** (on-demand mode): it polls the worker's inbox and launches a Claude Code session
+*only when there is pending work* (or a patrol interval elapses); the session drains its inbox and
+exits; the watchdog restarts it when new work arrives. It handles rate-limit backoff, a
+max-session ceiling, a global concurrency cap, and liveness heartbeats. You can point `WATCHDOG_BIN`
+at your own script instead — the contract is just "a program that takes these args and runs a
+worker until killed."
+
+Two spawn modes:
 
 - **Subprocess mode** (default): detached child; stdout/stderr go to
-  `WORKERS_LOG_DIR/<name>.{out,err}.log`; stopped via SIGTERM to the process group.
+  `WORKERS_LOG_DIR/<name>.{out,err}.log`; stopped via SIGTERM to the process group. The broker
+  injects `BROKER_URL` and `BROKER_SECRET` so the watchdog can reach the authenticated broker.
 - **tmux mode** (`WORKERS_TMUX_SESSION` set): each worker runs in its own tmux window; the broker
   injects `BROKER_SECRET`/`BROKER_URL`/`CLAUDE_*` env vars into the window.
+
+**Role files.** Each worker session runs in `<repo-root>/<worker>/` and reads a `CLAUDE.md` there
+for its identity and protocol. Generate starter ones with `npm run setup -- --scaffold-roles`
+(writes `roles/orchestrator.md` + `roles/<worker>.md`), then place each worker's file as the
+`CLAUDE.md` in its working directory. Without a role file the session still runs, just unguided.
+
+**`watchdog.sh` options** (passed via each worker's `args` in `workers.json`):
+`--repo-root <path>`, `--inbox-channel <channel>` (required), `--patrol-interval <seconds>` for
+always-on workers, `--max-session-minutes <n>` (default 45). Env: `CLAUDE_BIN`, `CLAUDE_MODEL`
+(default `claude-haiku-4-5-20251001`), `MAX_CONCURRENT` (default 8). Requires `node` and `curl`.
 
 **Config file** — see [`workers.example.json`](../workers.example.json):
 

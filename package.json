@@ -34,6 +34,7 @@
   "files": [
     "server.js",
     "setup.js",
+    "watchdog.sh",
     "schemas/",
     "docs/",
     ".env.example",
