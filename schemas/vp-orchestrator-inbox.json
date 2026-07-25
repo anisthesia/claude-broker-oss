@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "voice-platform orchestrator-inbox envelope",
+  "description": "Messages sent to the voice-platform orchestrator inbox (vp-orchestrator): questions, notes, and status updates from workers or the human operator.",
+  "version": "1.0",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["question", "note", "status"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity: 'backend', 'frontend', 'voice', 'reviewer', or 'human'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Recipient: 'orchestrator'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "additionalProperties": false
+}

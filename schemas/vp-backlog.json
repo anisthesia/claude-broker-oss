@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "voice-platform backlog envelope",
+  "description": "Persistent deferred tasks and sprint-retrospective entries for voice-platform (vp-backlog, vp-sprint-retrospective). These channels are never purged.",
+  "version": "1.0",
+  "type": "object",
+  "required": ["type", "task_id", "from", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["deferred", "deferred-resolved", "retrospective", "note"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity, typically 'orchestrator'."
+    },
+    "to": { "type": "string", "minLength": 1 },
+    "subject": { "type": "string", "minLength": 3 },
+    "resolves_task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "On type:deferred-resolved — the task_id of the deferred entry being closed."
+    },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "additionalProperties": false
+}
