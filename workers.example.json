@@ -1,0 +1,35 @@
+[
+  {
+    "name": "backend",
+    "ns": "team",
+    "args": [
+      "backend",
+      "--repo-root",
+      "/path/to/your/repo",
+      "--inbox-channel",
+      "team-backend"
+    ]
+  },
+  {
+    "name": "frontend",
+    "ns": "team",
+    "args": [
+      "frontend",
+      "--repo-root",
+      "/path/to/your/repo",
+      "--inbox-channel",
+      "team-frontend"
+    ]
+  },
+  {
+    "name": "qa",
+    "ns": "team",
+    "args": [
+      "qa",
+      "--repo-root",
+      "/path/to/your/repo",
+      "--inbox-channel",
+      "team-qa"
+    ]
+  }
+]

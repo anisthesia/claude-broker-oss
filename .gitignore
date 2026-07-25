@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Local config & secrets
+.env
+
+# SQLite database + write-ahead-log artifacts
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime logs
+logs/
+worker-logs/
+*.log
+
+# Local worker config (copy workers.example.json → workers.json)
+workers.json
+
+# OS / editor cruft
+.DS_Store
