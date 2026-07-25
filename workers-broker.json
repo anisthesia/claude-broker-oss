@@ -1,10 +1,5 @@
 [
   {
-    "name": "vp-orch",
-    "ns": "vp",
-    "args": ["orchestrators/voice-platform", "--repo-root", "/Users/anis/myprojects/voice-platform", "--inbox-channel", "vp-orchestrator"]
-  },
-  {
     "name": "vp-backend",
     "ns": "vp",
     "args": ["workers/backend", "--repo-root", "/Users/anis/myprojects/voice-platform", "--inbox-channel", "vp-backend"]
