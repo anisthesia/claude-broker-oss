@@ -33,6 +33,7 @@
   },
   "files": [
     "server.js",
+    "setup.js",
     "schemas/",
     "docs/",
     ".env.example",
@@ -43,6 +44,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "setup": "node setup.js",
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node run-tests.js"

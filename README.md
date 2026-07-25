@@ -28,10 +28,10 @@ git clone https://github.com/rideprodev/claude-broker.git
 cd claude-broker
 npm install
 
-# Configure — at minimum set a strong SHARED_SECRET
-cp .env.example .env
-# edit .env, or generate a secret inline:
-#   echo "SHARED_SECRET=$(openssl rand -hex 32)" >> .env
+# Configure — the wizard writes .env + workers.json and generates a secret.
+# Point --project at the repo you want to coordinate (or omit for a bare setup).
+npm run setup -- --project /path/to/your/project
+# (manual alternative: cp .env.example .env, then set SHARED_SECRET)
 
 npm start
 ```

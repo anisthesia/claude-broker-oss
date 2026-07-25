@@ -44,17 +44,21 @@ cd claude-broker
 npm install          # compiles better-sqlite3 — this is where a missing toolchain fails
 ```
 
-### 2. Configure
+### 2. Configure — run the setup wizard
 
 ```bash
-cp .env.example .env
-# generate a strong secret and append it:
-echo "SHARED_SECRET=$(openssl rand -hex 32)" >> .env
+npm run setup -- --project /path/to/the/customers/project
 ```
 
-Open `.env` and confirm there's exactly one `SHARED_SECRET=` line with the generated value.
-That's the only setting required for a local run. **The broker refuses to start without it** — a
-deliberate safety default.
+The wizard scans the project for its components (backend, frontend, …), derives a namespace,
+generates a strong `SHARED_SECRET`, and writes `.env` + `workers.json` for you. It's re-runnable
+and never overwrites an existing secret. Run it once now (before the broker is up) to write the
+config; run it again after step 3 and it will also register starter channel schemas on the running
+broker. It prints the exact `claude mcp add` command for step 4 at the end — copy that.
+
+> Prefer to do it by hand? `cp .env.example .env`, then
+> `echo "SHARED_SECRET=$(openssl rand -hex 32)" >> .env`. **The broker refuses to start without a
+> secret** — a deliberate safety default.
 
 ### 3. Start the broker & verify
 
