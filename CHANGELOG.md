@@ -6,6 +6,15 @@ All notable changes to this project are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **Git isolation for concurrent workers.** `npm run setup --isolate` gives each worker its own
+  git worktree on a `worker/<name>` branch, so parallel workers can't clobber each other on a
+  shared checkout. Ships two scripts: `worktree-setup.sh` (creates the worktrees) and
+  `sprint-close-merge.sh` (merges worker branches into main with a dirty-tree preflight and
+  phase-scoped recovery advice, then resets worktrees). Isolated worker role files gain a
+  branch-safety turn-start ritual, and the per-worker root `CLAUDE.md` is auto-excluded from
+  commits so it never pollutes a merge. The watchdog gained `--work-dir` to run a session at a
+  worktree root.
+
 - **`watchdog.sh`** — a bundled worker supervisor. `start_worker` now spawns autonomous,
   on-demand worker sessions out of the box (poll inbox → launch on pending work → drain → exit →
   restart), with rate-limit backoff, a max-session ceiling, a concurrency cap, and heartbeats.

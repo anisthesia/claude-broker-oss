@@ -35,6 +35,8 @@
     "server.js",
     "setup.js",
     "watchdog.sh",
+    "worktree-setup.sh",
+    "sprint-close-merge.sh",
     "schemas/",
     "docs/",
     ".env.example",

@@ -42,6 +42,7 @@ INBOX_CHANNEL=""
 PATROL_INTERVAL=""
 PATROL_WATCH_CHANNEL=""      # default derived from the inbox namespace below
 REPO_ROOT_OVERRIDE=""
+WORK_DIR_OVERRIDE=""         # explicit session working dir (e.g. an isolated worktree)
 MAX_SESSION_MINUTES=""
 
 while [[ $# -gt 0 ]]; do
@@ -50,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --patrol-interval)        PATROL_INTERVAL="$2";        shift 2 ;;
     --patrol-watch-channel)   PATROL_WATCH_CHANNEL="$2";   shift 2 ;;
     --repo-root)              REPO_ROOT_OVERRIDE="$2";     shift 2 ;;
+    --work-dir)               WORK_DIR_OVERRIDE="$2";      shift 2 ;;
     --max-session-minutes)    MAX_SESSION_MINUTES="$2";    shift 2 ;;
     *) echo "[watchdog:$WORKER] Unknown option: $1"; exit 1 ;;
   esac
@@ -72,7 +74,13 @@ if [[ -n "$REPO_ROOT_OVERRIDE" ]]; then
 else
   REPO_ROOT="$(pwd)"
 fi
-WORKER_DIR="$REPO_ROOT/$WORKER"
+# --work-dir wins (isolated-worktree mode: the session runs at the worktree root).
+# Otherwise the session runs in <repo-root>/<worker>.
+if [[ -n "$WORK_DIR_OVERRIDE" ]]; then
+  WORKER_DIR="$WORK_DIR_OVERRIDE"
+else
+  WORKER_DIR="$REPO_ROOT/$WORKER"
+fi
 CLAUDE="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 BROKER_URL="${BROKER_URL:-http://localhost:8080}"
 BROKER_SECRET="${BROKER_SECRET:-}"

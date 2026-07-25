@@ -18,6 +18,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { basename, join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -36,6 +37,8 @@ const opts = {
   schemas: !has("--no-schemas"),
   scaffoldRoles: has("--scaffold-roles"),
   installRoles: has("--install-roles"),
+  isolate: has("--isolate"),
+  worktreeBase: flag("--worktree-base"),
   rolesDir: flag("--roles-dir") || "roles",
   yes: has("--yes", "-y"),
 };
@@ -201,7 +204,22 @@ Send to the target worker's inbox. Envelope (matches \`schemas/worker-inbox.json
 `;
 }
 
-function workerRole({ project, ns, port, worker }) {
+function workerRole({ project, ns, port, worker, isolate }) {
+  const gitSection = isolate ? `
+## Git discipline (first action every session)
+
+You work in your own isolated git worktree on branch \`worker/${worker}\`. Before anything else:
+
+\`\`\`bash
+git fetch origin 2>/dev/null || true
+git branch --show-current      # MUST print "worker/${worker}"
+\`\`\`
+
+If it does not print \`worker/${worker}\`: post a \`type: question\` to \`${ns}-status\` and **STOP** —
+do not start any task. Commit your work to \`worker/${worker}\`; the orchestrator merges it to the
+main branch at sprint close (\`sprint-close-merge.sh\`). Never switch branches or touch another
+worker's worktree.
+` : "";
   return `# ${worker} Worker — ${basename(project)}
 
 ## Identity
@@ -211,7 +229,7 @@ component of the project. You **receive** tasks from the orchestrator and report
 **not** dispatch work to others, and you stay within your component's files.
 
 The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`).
-
+${gitSection}
 ## Channels
 
 - \`${ns}-${worker}\` — your inbox (read first, every turn)
@@ -257,13 +275,13 @@ When a task is done, post to \`${ns}-status\`. Envelope (matches \`schemas/statu
 `;
 }
 
-function scaffoldRoles({ project, ns, port, components, rolesDir, interactive }) {
+function scaffoldRoles({ project, ns, port, components, rolesDir, interactive, isolate }) {
   const dir = resolve(OUT_DIR, rolesDir);
   mkdirSync(dir, { recursive: true });
   const written = [];
   const files = [
     ["orchestrator.md", orchestratorRole({ project, ns, port, components })],
-    ...components.map((w) => [`${w}.md`, workerRole({ project, ns, port, worker: w })]),
+    ...components.map((w) => [`${w}.md`, workerRole({ project, ns, port, worker: w, isolate })]),
   ];
   for (const [name, content] of files) {
     const p = join(dir, name);
@@ -276,18 +294,21 @@ function scaffoldRoles({ project, ns, port, components, rolesDir, interactive })
 
 // Copies each worker's role file into <project>/<component>/CLAUDE.md so the watchdog
 // session picks it up. Never overwrites an existing CLAUDE.md; skips missing dirs.
-function installRoles({ project, components, rolesDir }) {
+// baseDir: the directory whose <comp>/ subdir receives the role file as CLAUDE.md.
+// Normal mode → the project (writes to <project>/<comp>/CLAUDE.md).
+// Isolate mode → the worktree base (writes to <worktree-base>/<comp>/CLAUDE.md = the worktree root).
+function installRoles({ baseDir, components, rolesDir }) {
   const srcDir = resolve(OUT_DIR, rolesDir);
   const results = [];
   for (const comp of components) {
     const src = join(srcDir, `${comp}.md`);
-    const destDir = join(project, comp);
+    const destDir = join(baseDir, comp);
     const dest = join(destDir, "CLAUDE.md");
     if (!existsSync(src)) { results.push({ comp, status: "no role file" }); continue; }
     if (!existsSync(destDir)) { results.push({ comp, status: "skipped — no dir" }); continue; }
     if (existsSync(dest)) { results.push({ comp, status: "skipped — CLAUDE.md exists" }); continue; }
     writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
-    results.push({ comp, status: "installed", path: `${basename(project)}/${comp}/CLAUDE.md` });
+    results.push({ comp, status: "installed", path: dest.replace(dirname(baseDir) + "/", "") });
   }
   return results;
 }
@@ -357,10 +378,26 @@ async function main() {
     writeFileSync(envPath, env, "utf8");
   }
 
-  // 6. Write workers.json
+  // 5b. Isolation mode: give each worker its own git worktree + branch (worker/<name>),
+  // so concurrent workers can never clobber each other on a shared checkout.
+  let worktreeBase = null;
+  if (opts.isolate) {
+    worktreeBase = opts.worktreeBase ? resolve(opts.worktreeBase) : join(dirname(project), `${basename(project)}-workers`);
+    line(`\n  Isolation mode — creating a git worktree per worker under ${c.b(worktreeBase)}`);
+    const r = spawnSync("bash", [join(SCRIPT_DIR, "worktree-setup.sh"), "--project", project, "--worktree-base", worktreeBase, ...components], { stdio: "inherit" });
+    if (r.status !== 0) {
+      line(c.y("  worktree setup failed (is the project a git repo?). Aborting so you don't get an unsafe shared-checkout config."));
+      if (rl) rl.close();
+      process.exit(1);
+    }
+  }
+
+  // 6. Write workers.json — isolate mode points each worker at its own worktree.
   const workers = components.map((comp) => ({
     name: comp, ns,
-    args: [comp, "--repo-root", project, "--inbox-channel", `${ns}-${comp}`],
+    args: opts.isolate
+      ? [comp, "--work-dir", join(worktreeBase, comp), "--inbox-channel", `${ns}-${comp}`]
+      : [comp, "--repo-root", project, "--inbox-channel", `${ns}-${comp}`],
   }));
   const workersPath = join(OUT_DIR, "workers.json");
   let writeWorkers = true;
@@ -371,18 +408,19 @@ async function main() {
   let schemaResult = { ran: false, reason: "skipped (--no-schemas)" };
   if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components });
 
-  // 7b. Scaffold role files (opt-in). --install-roles implies scaffolding.
+  // 7b. Scaffold role files. --install-roles and --isolate both imply scaffolding.
   let roles = null;
-  const wantScaffold = opts.scaffoldRoles || opts.installRoles ||
+  const wantScaffold = opts.scaffoldRoles || opts.installRoles || opts.isolate ||
     (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)));
-  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive });
+  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: opts.isolate });
 
-  // 7c. Install worker role files into the project's component dirs (opt-in, writes to the project)
+  // 7c. Install worker role files as CLAUDE.md where each session runs.
+  // Isolate mode → the worktree root (auto). Otherwise → the project's component dir (opt-in).
   let installed = null;
-  if (roles && (opts.installRoles ||
-      (interactive && (await askYesNo(`Install worker roles as CLAUDE.md into ${basename(project)}/<component>/? (writes into the project)`, false))))) {
-    installed = installRoles({ project, components, rolesDir: opts.rolesDir });
-  }
+  const installBase = opts.isolate ? worktreeBase : project;
+  const doInstall = opts.isolate || opts.installRoles ||
+    (interactive && (await askYesNo(`Install worker roles as CLAUDE.md into ${basename(project)}/<component>/? (writes into the project)`, false)));
+  if (roles && doInstall) installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir });
 
   if (rl) rl.close();
 
@@ -396,7 +434,14 @@ async function main() {
   line(`  ${c.b("Components")}  ${components.join(", ")}`);
   line(`  ${c.b("Wrote")}       ${writeEnv ? ".env" : "(kept .env)"}, ${writeWorkers ? "workers.json" : "(kept workers.json)"}`);
   line(`  ${c.b("Channels")}    ${channels.join(", ")}`);
+  if (opts.isolate) {
+    line(`  ${c.b("Isolation")}   git worktree per worker under ${worktreeBase} (branch worker/<name>)`);
+  }
   line();
+  if (opts.isolate) {
+    line(`  ${c.g("✓")} Each worker has an isolated worktree on its own branch — safe for concurrent code changes.`);
+    line(`    ${c.dim(`Merge a sprint back to main with:  ./sprint-close-merge.sh --project ${project} ${components.join(" ")}`)}`);
+  }
   if (schemaResult.ran) {
     const ok = schemaResult.done.filter((d) => d.ok).length;
     line(`  ${c.g("✓")} Registered ${ok}/${schemaResult.done.length} starter schemas (warn mode) on the running broker.`);

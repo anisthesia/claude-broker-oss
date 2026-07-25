@@ -149,10 +149,35 @@ Two spawn modes:
 - **tmux mode** (`WORKERS_TMUX_SESSION` set): each worker runs in its own tmux window; the broker
   injects `BROKER_SECRET`/`BROKER_URL`/`CLAUDE_*` env vars into the window.
 
-**Role files.** Each worker session runs in `<repo-root>/<worker>/` and reads a `CLAUDE.md` there
+**Role files.** Each worker session runs in its working directory and reads a `CLAUDE.md` there
 for its identity and protocol. Generate starter ones with `npm run setup -- --scaffold-roles`
 (writes `roles/orchestrator.md` + `roles/<worker>.md`), then place each worker's file as the
 `CLAUDE.md` in its working directory. Without a role file the session still runs, just unguided.
+
+### Git isolation (concurrent code workers)
+
+If multiple workers write code at the same time, run them on **isolated git worktrees** so they
+can't clobber each other on a shared checkout:
+
+```bash
+npm run setup -- --project /path/to/repo --isolate
+```
+
+This (via the bundled `worktree-setup.sh`) creates one git worktree per worker under
+`<repo>-workers/<name>`, each on its own `worker/<name>` branch; points each worker's `--work-dir`
+at its worktree; installs the role file (with a branch-safety ritual) as the worktree's
+`CLAUDE.md`; and excludes that root `CLAUDE.md` from commits so it never pollutes a merge. Workers
+commit to their own branch. At sprint close, the orchestrator integrates everything:
+
+```bash
+./sprint-close-merge.sh --project /path/to/repo <worker>...
+```
+
+That merges each `worker/<name>` into the main branch (`--no-ff`, dirty-tree preflight, pushes if
+an `origin` remote exists), then resets every worktree to the new main HEAD for the next sprint.
+
+Skip `--isolate` when workers only read/coordinate or edit disjoint directories — a shared checkout
+is simpler and fine there.
 
 **`watchdog.sh` options** (passed via each worker's `args` in `workers.json`):
 `--repo-root <path>`, `--inbox-channel <channel>` (required), `--patrol-interval <seconds>` for
