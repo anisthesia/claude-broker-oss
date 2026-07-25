@@ -15,7 +15,7 @@ exposure, no reverse proxy. (For a team spread across machines, see
    git remote add origin git@github.com:<you>/claude-broker.git
    git push -u origin main
    ```
-2. **If your repo name/owner differs from `rideprodev/claude-broker`**, update the URLs in
+2. **If your repo name/owner differs from `anisthesia/claude-broker`**, update the URLs in
    `package.json` (`homepage`, `repository`, `bugs`) and the clone line in `README.md` so the
    customer's `git clone` works.
 3. **Grant the customer read access** to the repo (Settings → Collaborators).
