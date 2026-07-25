@@ -35,6 +35,7 @@ const opts = {
   port: flag("--port"),
   schemas: !has("--no-schemas"),
   scaffoldRoles: has("--scaffold-roles"),
+  installRoles: has("--install-roles"),
   rolesDir: flag("--roles-dir") || "roles",
   yes: has("--yes", "-y"),
 };
@@ -273,6 +274,24 @@ function scaffoldRoles({ project, ns, port, components, rolesDir, interactive })
   return { dir: rolesDir, written };
 }
 
+// Copies each worker's role file into <project>/<component>/CLAUDE.md so the watchdog
+// session picks it up. Never overwrites an existing CLAUDE.md; skips missing dirs.
+function installRoles({ project, components, rolesDir }) {
+  const srcDir = resolve(OUT_DIR, rolesDir);
+  const results = [];
+  for (const comp of components) {
+    const src = join(srcDir, `${comp}.md`);
+    const destDir = join(project, comp);
+    const dest = join(destDir, "CLAUDE.md");
+    if (!existsSync(src)) { results.push({ comp, status: "no role file" }); continue; }
+    if (!existsSync(destDir)) { results.push({ comp, status: "skipped — no dir" }); continue; }
+    if (existsSync(dest)) { results.push({ comp, status: "skipped — CLAUDE.md exists" }); continue; }
+    writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
+    results.push({ comp, status: "installed", path: `${basename(project)}/${comp}/CLAUDE.md` });
+  }
+  return results;
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 async function main() {
   line();
@@ -352,10 +371,17 @@ async function main() {
   let schemaResult = { ran: false, reason: "skipped (--no-schemas)" };
   if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components });
 
-  // 7b. Scaffold role files (opt-in)
+  // 7b. Scaffold role files (opt-in). --install-roles implies scaffolding.
   let roles = null;
-  if (opts.scaffoldRoles || (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)))) {
-    roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive });
+  const wantScaffold = opts.scaffoldRoles || opts.installRoles ||
+    (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)));
+  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive });
+
+  // 7c. Install worker role files into the project's component dirs (opt-in, writes to the project)
+  let installed = null;
+  if (roles && (opts.installRoles ||
+      (interactive && (await askYesNo(`Install worker roles as CLAUDE.md into ${basename(project)}/<component>/? (writes into the project)`, false))))) {
+    installed = installRoles({ project, components, rolesDir: opts.rolesDir });
   }
 
   if (rl) rl.close();
@@ -380,7 +406,14 @@ async function main() {
   }
   if (roles) {
     line(`  ${c.g("✓")} Scaffolded ${roles.written.length} role files in ${c.b(roles.dir + "/")} (orchestrator + ${components.length} worker${components.length === 1 ? "" : "s"}).`);
-    line(`    ${c.dim("Use each file as the CLAUDE.md / system prompt for that session (see below).")}`);
+    if (!installed) line(`    ${c.dim("Use each file as the CLAUDE.md / system prompt for that session (see below).")}`);
+  }
+  if (installed) {
+    const ok = installed.filter((r) => r.status === "installed");
+    const skipped = installed.filter((r) => r.status !== "installed");
+    if (ok.length) line(`  ${c.g("✓")} Installed ${ok.length} worker role file(s) into the project: ${ok.map((r) => r.path).join(", ")}`);
+    for (const s of skipped) line(`  ${c.y("•")} ${s.comp}: ${s.status}`);
+    line(`    ${c.dim("Orchestrator role stays in roles/orchestrator.md — use it for the orchestrating session.")}`);
   }
   line();
   line(c.b("  Next steps:"));

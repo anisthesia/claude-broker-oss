@@ -160,9 +160,20 @@ npm run setup -- --project /path/to/project --scaffold-roles
 
 This writes a `roles/` folder with one `orchestrator.md` and one `<component>.md` per worker. Each
 file defines that session's identity, its channels, a turn-start ritual, and the exact task/result
-envelope to use (the examples are validated against the strict schemas). Use each file as the
-`CLAUDE.md` in the directory where you run that session — or paste it as the session's opening
-instructions. This is the fastest way to get the orchestrator and workers behaving consistently.
+envelope to use (the examples are validated against the strict schemas).
+
+To place them automatically, add `--install-roles`:
+
+```bash
+npm run setup -- --project /path/to/project --install-roles
+```
+
+This copies each worker's role file into `<project>/<component>/CLAUDE.md` — exactly where the
+watchdog runs that worker's session, so it's picked up with no further steps. It **never
+overwrites an existing `CLAUDE.md`** (it skips and tells you). The orchestrator role stays in
+`roles/orchestrator.md`; use it for the session that dispatches work. Without `--install-roles`,
+place the files yourself (as the `CLAUDE.md` in each session's directory, or as the opening
+instructions).
 
 ---
 
