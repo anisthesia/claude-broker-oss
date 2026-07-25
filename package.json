@@ -38,6 +38,7 @@
     ".env.example",
     "workers.example.json",
     "README.md",
+    "CUSTOMER-SETUP.md",
     "LICENSE",
     "CHANGELOG.md"
   ],
