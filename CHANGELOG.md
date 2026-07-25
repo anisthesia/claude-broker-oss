@@ -5,6 +5,17 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Changed
+- **Scaffolded role files now encode the full operational protocol**, not just the core loop. Worker
+  roles gained: cold-start capability registration, idempotency-first (`check_result` before running),
+  dependency gating (`depends_on` + `wait_for_messages`), envelope-field discipline
+  (`context`/`constraints`/`files.write`/`scope`/`checks`/`acceptance_criteria`), a commit protocol,
+  a consent-basis-aware result envelope, the drain-and-exit idle loop, and a rotation protocol.
+  Orchestrator roles gained the full task envelope, dependency chaining, acceptance-criteria
+  verification before closing, and `sprint_file_conflicts` gating. All examples validated against the
+  strict schemas. (Roles roughly doubled in depth — the behavioral protocol now matches the data
+  contract the schemas already enforce.)
+
 ### Added
 - **Multi-repo (polyrepo) support.** `npm run setup --multi-repo` treats a folder of separate git
   repos as the project: each sub-repo becomes a worker with a worktree of *its own* repo on a

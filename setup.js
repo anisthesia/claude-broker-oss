@@ -187,6 +187,7 @@ async function registerSchemas({ port, secret, ns, components }) {
 function orchestratorRole({ project, ns, port, components }) {
   const registry = components.map((w) => `| \`${w}\` | \`${ns}-${w}\` | the ${w} component |`).join("\n");
   const dispatch = components.map((w) => `\`${ns}-${w}\``).join(", ");
+  const firstWorker = components[0] || "backend";
   return `# Orchestrator — ${basename(project)}
 
 ## Identity
@@ -214,45 +215,78 @@ ${registry}
 
 ## Turn-start ritual
 
-At the start of every turn, before anything else:
+On the first turn of a session use \`since_id=0\` for every channel; remember the highest id seen
+per channel and persist it across turns. Then, every turn:
 
 1. \`read_messages(channel="${ns}-orchestrator", since_id=<last>)\` — your inbox.
-2. \`read_messages(channel="${ns}-status", since_id=<last>)\` — new results/status.
-3. Update your task ledger (\`task_id → {worker, status}\`) from any \`type: result\` messages.
-4. Answer any \`type: question\` addressed to you first — that worker is blocked.
+2. \`read_messages(channel="${ns}-status", since_id=<last>)\` — new results, questions, blockers.
+3. Update your task ledger (\`task_id → {worker, status, blockers}\`) from any \`type: result\`.
+4. Answer any \`type: question\` addressed to you **first** — that worker is blocked until you do.
+5. Worker health: if a result is overdue, \`list_workers\`; if the worker is stopped with a pending
+   inbox, \`start_worker\` it (\`node check-worker-health.js --fix\` starts all stalled workers).
 
 ## Dispatching a task
 
-Send to the target worker's inbox. Envelope (matches \`schemas/worker-inbox.json\`):
+**One task = one deliverable.** Send the JSON (as a string) to the worker's inbox. Full envelope
+(matches \`schemas/worker-inbox.json\`):
 
 \`\`\`json
 {
   "type": "task",
-  "task_id": "add-analytics-2026-07-25-endpoint",
+  "task_id": "<slug>-<YYYY-MM-DD>",
   "from": "orchestrator",
-  "to": "${components[0] || "backend"}",
-  "subject": "One-line summary of the task",
-  "context": "One sentence on why this task exists.",
-  "body": { "detail": "What to build, acceptance criteria, constraints." }
+  "to": "${firstWorker}",
+  "subject": "short label",
+  "context": "One sentence: why this task exists.",
+  "background": "Optional: prior decisions, related tasks, what failed before.",
+  "scope": "small | medium | large",
+  "depends_on": ["<other-task_id>:<worker>"],
+  "files": { "read": ["ref/file"], "write": ["path/the/worker/may/modify"] },
+  "constraints": ["Do NOT touch files outside files.write"],
+  "checks": [{ "name": "test", "run": "<test command>", "pass_condition": "all pass" }],
+  "acceptance_criteria": ["Each item the worker must confirm in its result body"],
+  "result_template": { "required_checks": {}, "commits": [], "consent_basis": "orchestrator-dispatch-only" },
+  "body": "Full instructions. Embed the acceptance_criteria as a checklist at the end."
 }
 \`\`\`
 
-\`send_message(channel="${ns}-${components[0] || "backend"}", sender="orchestrator", content=<the JSON above as a string>)\`
+\`send_message(channel="${ns}-${firstWorker}", sender="orchestrator", content=<the JSON as a string>)\`
 
-## Collecting results
+Field discipline:
+- **\`task_id\`** — \`<slug>-<YYYY-MM-DD>\`, stable and unique; workers use it for idempotency.
+- **\`context\`** and **\`scope\`** always (\`large\` = the worker should plan for context rotation).
+- **\`depends_on\`** — chain tasks so a worker waits for a prerequisite's result before starting.
+  Never combine two deliverables in one task; split and chain with \`depends_on\` instead.
+- **\`acceptance_criteria\`** always, and embed the same checklist in \`body\`. The worker confirms
+  every item before posting \`type: result\`; if any is incomplete it posts \`type: question\`.
+- **\`constraints\`** / **\`files.write\`** — hard limits the worker must obey.
+
+## Collecting results & gating the sprint
 
 - \`check_result(channel="${ns}-status", task_id="…")\` — one task's latest result.
+- \`check_results_batch(channel="${ns}-status", task_ids=[…])\` — many at once.
 - \`sprint_summary(status_channel="${ns}-status")\` — dispatched/completed/failed/pending counts.
+- **Verify before closing**: when a result arrives, confirm the body satisfies every
+  \`acceptance_criteria\` item. If any is missing, dispatch a continuation task — do NOT close it.
+- **Before merging**: \`sprint_file_conflicts(status_channel="${ns}-status")\` — if two workers
+  touched overlapping files, resolve it before the merge.
+- **Sprint close**: once results pass, merge each worker branch with \`sprint-close-merge.sh\`
+  (the setup output printed the exact command).
 
 ## Rules
 
-- One atomic task per dispatch. Don't give a worker two unrelated things at once.
-- Never \`purge_channel\` without explicit human confirmation (use AskUserQuestion).
-- Sequence work so two workers don't edit the same files in the same sprint.
+- One atomic task per dispatch; sequence with \`depends_on\` to avoid conflicts.
+- Never \`purge_channel\` / \`purge_channels_by_prefix\` without explicit human confirmation
+  (use AskUserQuestion) — deletion is irreversible.
+- You coordinate; you do not write feature code.
 `;
 }
 
 function workerRole({ project, ns, port, worker, isolate }) {
+  const branch = isolate ? `worker/${worker}` : "main";
+  const stageCmd = isolate
+    ? "git add -A   # safe — your worktree is private; the root CLAUDE.md is auto-excluded"
+    : "git add <only the files you changed>   # never `git add -A` on a shared checkout";
   const gitSection = isolate ? `
 ## Git discipline (first action every session)
 
@@ -285,19 +319,44 @@ ${gitSection}
 - \`${ns}-status\` — post all results + status here
 - \`${ns}-telemetry\` — post heartbeats here
 
+## Cold start (first turn of a session)
+
+Advertise what you own, once per session:
+\`register_capability(worker="${worker}", owns=["${worker}"], channels=["${ns}-${worker}", "${ns}-status", "${ns}-telemetry"])\`
+
 ## Turn-start ritual
 
-1. \`turn_start(inbox_channel="${ns}-${worker}", telemetry_channel="${ns}-telemetry", worker="${worker}", …)\`
-   — records a heartbeat and returns your pending inbox in one call.
-   (Or, manually: \`read_messages(channel="${ns}-${worker}", since_id=<last>)\` +
-   \`upsert_heartbeat(channel="${ns}-telemetry", sender="${worker}", content=…)\`.)
+1. \`turn_start(inbox_channel="${ns}-${worker}", telemetry_channel="${ns}-telemetry", worker="${worker}", ...)\`
+   — records a heartbeat and returns your pending inbox in one call. (Manual equivalent:
+   \`read_messages(channel="${ns}-${worker}", since_id=<last>)\` + \`upsert_heartbeat(channel="${ns}-telemetry", sender="${worker}", ...)\`.)
 2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — pick up broadcasts.
-3. If your inbox has a \`type: task\`, work it. If you're blocked, post a \`type: question\`
-   to \`${ns}-status\` addressed to the orchestrator and stop.
+3. **Rotate check.** If any message is \`type: "rotate"\`, follow the Rotation protocol below and exit.
+4. For each \`type: task\` addressed to \`${worker}\` or \`*\`:
+   - **Idempotency FIRST**: \`check_result(channel="${ns}-status", task_id=<id>)\`. If \`found: true\`,
+     post a \`type: note\` ("task <id> already done — skipping") and move on. Never re-run a task.
+   - **Dependency gate**: if \`depends_on\` is set, verify each dependency's result is on \`${ns}-status\`.
+     If missing: \`wait_for_messages(channel="${ns}-status", since_id=<last>, timeout_ms=270000)\`.
+     Still missing after the wait → post \`type: status\` ("waiting on <dep>") and skip this task.
+   - **Read the envelope before touching a file**: \`context\` + \`background\` (why), \`constraints\`
+     (per-task do-NOTs — obey even when they conflict with your defaults), \`files.write\` (modify only
+     these), \`scope\`, \`checks\` (run each, verify its \`pass_condition\`), \`acceptance_criteria\`
+     (confirm every item in your result; if any can't be met, post \`type: question\`, not a result).
+5. A \`type: question\` addressed to you → answer it, then continue.
+
+## Doing the work & committing
+
+Stay within \`${worker}\`. Run the task's \`checks\` (tests/build) before reporting PASS. Commit to \`${branch}\`:
+
+\`\`\`bash
+${stageCmd}
+git commit -m "[<task_id>] <subject from the envelope>"
+\`\`\`
+
+Report \`body.commits: [{sha, branch, message}]\`; if nothing changed, \`commits: []\` with a \`no_commit_reason\`.
 
 ## Reporting a result
 
-When a task is done, post to \`${ns}-status\`. Envelope (matches \`schemas/status.json\`):
+Post to \`${ns}-status\` (matches \`schemas/status.json\`):
 
 \`\`\`json
 {
@@ -305,21 +364,41 @@ When a task is done, post to \`${ns}-status\`. Envelope (matches \`schemas/statu
   "task_id": "<the task_id you were given>",
   "from": "${worker}",
   "to": "orchestrator",
-  "subject": "One-line summary",
-  "summary": "PASS — <=30 words on what changed",
-  "body": { "consent_basis": "orchestrator-dispatch-only", "commits": [{ "sha": "…", "branch": "main" }] },
-  "affected_files": ["${worker}/path/to/changed_file"]
+  "subject": "<same subject as the task>",
+  "summary": "PASS — <=30 words | FAIL — <why> | SKIP — <reason>",
+  "body": {
+    "consent_basis": "orchestrator-dispatch-only",
+    "required_checks": { "test": "PASS (n/n)", "committed": "PASS" },
+    "commits": [{ "sha": "abc1234", "branch": "${branch}", "message": "[<task_id>] ..." }]
+  },
+  "affected_files": ["${worker}/path/you/changed"]
 }
 \`\`\`
 
-\`send_message(channel="${ns}-status", sender="${worker}", content=<the JSON above as a string>)\`
+- \`summary\` is required and starts with \`PASS —\` / \`FAIL —\` / \`SKIP —\`.
+- \`consent_basis\` is required for production-touching work:
+  \`"terminal-human"\` / \`"approval-token:#<msg_id>"\` / \`"orchestrator-dispatch-only"\`.
+- Put verbose output in \`/tmp/<task_id>-<check>.txt\` and reference it as \`body.output_ref\`.
 
-## Rules
+## Idle — drain and exit (do NOT idle-poll)
 
-- Stay in your component (\`${worker}/\`). If a task needs another component's files, post a
-  \`type: question\` to the orchestrator instead of reaching across.
-- Every \`type: result\` needs a \`summary\` starting with \`PASS —\` / \`FAIL —\` / \`SKIP —\`.
-- Run the component's tests/build before reporting PASS.
+You run on demand: the watchdog starts you only when work is waiting. After posting a result:
+1. \`read_messages(channel="${ns}-${worker}", since_id=<last>)\` — drain any remaining tasks.
+2. Repeat until the inbox is empty.
+3. Post a \`type: status\` exit note ("inbox drained", last_task_id) to \`${ns}-status\`, then **exit**.
+
+\`wait_for_messages\` is ONLY for \`depends_on\` blocking — never for idle polling.
+
+**Before picking up the next queued task**: if your last heartbeat had \`rotation_recommended: true\`
+(or context is past ~50% of the tier threshold), exit cleanly instead — the watchdog starts a fresh
+session that picks it up with a clean context.
+
+## Rotation protocol
+
+On a \`type: "rotate"\` message, or when your context nears its limit: finish the current sub-task
+(post its result/status), post a \`type: status\` to \`${ns}-status\` with \`handoff_notes\` (current
+task_id, done vs pending, files touched), then **exit**. The watchdog restarts you; the new session
+resumes from broker state.
 `;
 }
 
