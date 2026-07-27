@@ -15,6 +15,12 @@ All notable changes to this project are documented here. This project adheres to
   so the bearer secret never lands in version control.
 
 ### Added
+- **Marker-based role install.** Role files now land in `CLAUDE.md` between
+  `<!-- claude-broker:role:start/end -->` markers. An existing customer CLAUDE.md is no longer a
+  silent dead end (previously the install skipped and workers launched with no broker protocol —
+  guaranteed with a committed root CLAUDE.md in worktree mode): the role is appended below the
+  existing content, re-runs replace only the marked section, and pre-marker wizard installs are
+  upgraded in place. `--no-role-append` opts out.
 - **Cluster-orchestrator tier.** `npm run setup -- --clusters "platform:backend+api;consumer:frontend"`
   scaffolds mid-level cluster orchestrators: each gets a `<ns>-<cluster>-orch` inbox, a private
   `<ns>-<cluster>-status` worker feed (new `schemas/cluster-status.json`), a headless-safe role

@@ -18,6 +18,7 @@
  *        --scaffold-roles  --install-roles  --isolate  --multi-repo  --worktree-base <path>
  *        --no-reviewer  --no-tmux  --tmux-session <name>  --mcp-settings / --no-mcp-settings
  *        --hooks / --no-hooks (orchestrator scope-guard hooks; worktree modes only)
+ *        --no-role-append (leave existing CLAUDE.md files untouched instead of appending the role)
  *        --model <id> (per-worker model stamped into workers.json)
  *        --patrol <name[:interval[:watch-channel]]> (repeatable; autonomous patrol workers)
  *        --clusters "<cluster>:<comp>+<comp>[;<cluster>:...]" (cluster-orchestrator tier)
@@ -56,6 +57,7 @@ const opts = {
   tmuxSession: flag("--tmux-session"),
   mcpSettings: has("--mcp-settings") ? true : has("--no-mcp-settings") ? false : null,
   hooks: has("--hooks") ? true : has("--no-hooks") ? false : null,
+  roleAppend: !has("--no-role-append"),
   yes: has("--yes", "-y"),
 };
 const interactive = !opts.yes && process.stdin.isTTY;
@@ -703,12 +705,39 @@ function scaffoldRoles({ project, ns, port, components, rolesDir, interactive, i
   return { dir: rolesDir, written };
 }
 
-// Copies each worker's role file into <project>/<component>/CLAUDE.md so the watchdog
-// session picks it up. Never overwrites an existing CLAUDE.md; skips missing dirs.
+// Writes a role into a CLAUDE.md without destroying the customer's own content.
+// The role lives between markers; everything outside them is never touched:
+//   - no file            → create it with the marked role block
+//   - markers present    → replace only the marked section (idempotent re-runs)
+//   - file == old role   → a pre-marker wizard install; rewrite it with markers
+//   - anything else      → append the marked block, keep the existing content
+// Claude Code reads CLAUDE.md hierarchically, so project conventions and the
+// broker protocol compose either way.
+const ROLE_START = "<!-- claude-broker:role:start (managed by setup.js — edits inside this section are overwritten on re-run) -->";
+const ROLE_END = "<!-- claude-broker:role:end -->";
+function writeRoleInto(dest, content) {
+  const block = `${ROLE_START}\n${content.trimEnd()}\n${ROLE_END}\n`;
+  if (!existsSync(dest)) { writeFileSync(dest, block, "utf8"); return "installed"; }
+  const cur = readFileSync(dest, "utf8");
+  const s = cur.indexOf(ROLE_START), e = cur.indexOf(ROLE_END);
+  if (s >= 0 && e > s) {
+    const next = cur.slice(0, s) + block.trimEnd() + cur.slice(e + ROLE_END.length);
+    if (next === cur) return "up to date";
+    writeFileSync(dest, next, "utf8");
+    return "updated role section";
+  }
+  if (cur.trim() === content.trim()) { writeFileSync(dest, block, "utf8"); return "updated (added markers)"; }
+  writeFileSync(dest, cur.trimEnd() + "\n\n" + block, "utf8");
+  return "appended role (existing content kept)";
+}
+
+// Installs each worker's role into <project>/<component>/CLAUDE.md so the watchdog
+// session picks it up. Skips missing dirs. With roleAppend=false, an existing
+// CLAUDE.md is left alone entirely (legacy behavior, --no-role-append).
 // baseDir: the directory whose <comp>/ subdir receives the role file as CLAUDE.md.
 // Normal mode → the project (writes to <project>/<comp>/CLAUDE.md).
 // Isolate mode → the worktree base (writes to <worktree-base>/<comp>/CLAUDE.md = the worktree root).
-function installRoles({ baseDir, components, rolesDir }) {
+function installRoles({ baseDir, components, rolesDir, roleAppend = true }) {
   const srcDir = resolve(OUT_DIR, rolesDir);
   const results = [];
   for (const comp of components) {
@@ -717,9 +746,9 @@ function installRoles({ baseDir, components, rolesDir }) {
     const dest = join(destDir, "CLAUDE.md");
     if (!existsSync(src)) { results.push({ comp, status: "no role file" }); continue; }
     if (!existsSync(destDir)) { results.push({ comp, status: "skipped — no dir" }); continue; }
-    if (existsSync(dest)) { results.push({ comp, status: "skipped — CLAUDE.md exists" }); continue; }
-    writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
-    results.push({ comp, status: "installed", path: dest.replace(dirname(baseDir) + "/", "") });
+    if (!roleAppend && existsSync(dest)) { results.push({ comp, status: "skipped — CLAUDE.md exists (--no-role-append)" }); continue; }
+    const status = writeRoleInto(dest, readFileSync(src, "utf8"));
+    results.push({ comp, status, path: dest.replace(dirname(baseDir) + "/", "") });
   }
   return results;
 }
@@ -727,18 +756,18 @@ function installRoles({ baseDir, components, rolesDir }) {
 // Installs a role whose session dir does not pre-exist in the project (reviewer, patrol
 // workers, cluster orchestrators): creates <project>/<destSubdir>/ and drops the role in
 // as CLAUDE.md. These always run against the main checkout, never a worktree.
-function installStandaloneRole({ project, rolesDir, roleFile, destSubdir, label }) {
+function installStandaloneRole({ project, rolesDir, roleFile, destSubdir, label, roleAppend = true }) {
   const src = resolve(OUT_DIR, rolesDir, roleFile);
   const destDir = join(project, destSubdir);
   const dest = join(destDir, "CLAUDE.md");
   if (!existsSync(src)) return { comp: label, status: "no role file" };
-  if (existsSync(dest)) return { comp: label, status: "skipped — CLAUDE.md exists" };
+  if (!roleAppend && existsSync(dest)) return { comp: label, status: "skipped — CLAUDE.md exists (--no-role-append)" };
   mkdirSync(destDir, { recursive: true });
-  writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
-  return { comp: label, status: "installed", path: dest.replace(dirname(project) + "/", "") };
+  const status = writeRoleInto(dest, readFileSync(src, "utf8"));
+  return { comp: label, status, path: dest.replace(dirname(project) + "/", "") };
 }
-function installReviewerRole({ project, rolesDir }) {
-  return installStandaloneRole({ project, rolesDir, roleFile: "reviewer.md", destSubdir: "reviewer", label: "reviewer" });
+function installReviewerRole({ project, rolesDir, roleAppend }) {
+  return installStandaloneRole({ project, rolesDir, roleFile: "reviewer.md", destSubdir: "reviewer", label: "reviewer", roleAppend });
 }
 
 // Wire the broker into a repo via .mcp.json at the repo root — the only project-level
@@ -1066,13 +1095,13 @@ async function main() {
   const doInstall = useWorktrees || opts.installRoles ||
     (interactive && (await askYesNo(`Install worker roles as CLAUDE.md into ${basename(project)}/<component>/? (writes into the project)`, false)));
   if (roles && doInstall) {
-    installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir });
-    if (opts.reviewer) installed.push(installReviewerRole({ project, rolesDir: opts.rolesDir }));
+    installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir, roleAppend: opts.roleAppend });
+    if (opts.reviewer) installed.push(installReviewerRole({ project, rolesDir: opts.rolesDir, roleAppend: opts.roleAppend }));
     for (const p of patrols) {
-      installed.push(installStandaloneRole({ project, rolesDir: opts.rolesDir, roleFile: `${p.name}.md`, destSubdir: p.name, label: p.name }));
+      installed.push(installStandaloneRole({ project, rolesDir: opts.rolesDir, roleFile: `${p.name}.md`, destSubdir: p.name, label: p.name, roleAppend: opts.roleAppend }));
     }
     for (const cl of clusters || []) {
-      installed.push(installStandaloneRole({ project, rolesDir: opts.rolesDir, roleFile: `${cl.name}-orch.md`, destSubdir: join("orchestrators", cl.name), label: `${cl.name}-orch` }));
+      installed.push(installStandaloneRole({ project, rolesDir: opts.rolesDir, roleFile: `${cl.name}-orch.md`, destSubdir: join("orchestrators", cl.name), label: `${cl.name}-orch`, roleAppend: opts.roleAppend }));
     }
   }
 
@@ -1150,9 +1179,10 @@ async function main() {
     if (!installed) line(`    ${c.dim("Use each file as the CLAUDE.md / system prompt for that session (see below).")}`);
   }
   if (installed) {
-    const ok = installed.filter((r) => r.status === "installed");
-    const skipped = installed.filter((r) => r.status !== "installed");
-    if (ok.length) line(`  ${c.g("✓")} Installed ${ok.length} worker role file(s) into the project: ${ok.map((r) => r.path).join(", ")}`);
+    const isOk = (r) => r.status === "installed" || r.status.startsWith("updated") || r.status.startsWith("appended") || r.status === "up to date";
+    const ok = installed.filter(isOk);
+    const skipped = installed.filter((r) => !isOk(r));
+    if (ok.length) line(`  ${c.g("✓")} Role protocol in place for ${ok.length} worker(s): ${ok.map((r) => `${r.path || r.comp}${r.status === "installed" ? "" : ` (${r.status})`}`).join(", ")}`);
     for (const s of skipped) line(`  ${c.y("•")} ${s.comp}: ${s.status}`);
     line(`    ${c.dim("Orchestrator role stays in roles/orchestrator.md — run the orchestrator interactively with it (not headless).")}`);
   }

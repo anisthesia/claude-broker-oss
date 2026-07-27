@@ -72,6 +72,12 @@ Included by default (each can be turned off):
   in the project get the broker tools with no `claude mcp add`. `.mcp.json` carries the secret,
   so setup adds it to the repo's local `.git/info/exclude` — fine for a localhost broker on one
   machine; skip it for shared/remote setups.
+- **Safe role install into existing CLAUDE.md files** — when a destination `CLAUDE.md` already
+  exists (a committed project CLAUDE.md shows up in every worktree checkout), the wizard appends
+  the role inside `<!-- claude-broker:role:start/end -->` markers instead of skipping, keeping
+  your content untouched. Re-runs replace only the marked section, so role updates propagate and
+  manual edits inside the markers are overwritten. `--no-role-append` restores the old
+  never-touch-existing-files behavior.
 - **Per-worker model** (`--model <id>`, e.g. `--model claude-opus-4-7`) — stamps a `model` field
   on every generated `workers.json` entry; `start_worker` uses it as that worker's default
   session model (an explicit `start_worker` model argument still overrides). Without it, workers
