@@ -2,6 +2,7 @@
   {
     "name": "backend",
     "ns": "team",
+    "model": "claude-opus-4-7",
     "args": [
       "backend",
       "--repo-root",
@@ -29,7 +30,11 @@
       "--repo-root",
       "/path/to/your/repo",
       "--inbox-channel",
-      "team-qa"
+      "team-qa",
+      "--patrol-interval",
+      "1800",
+      "--patrol-watch-channel",
+      "team-status"
     ]
   }
 ]

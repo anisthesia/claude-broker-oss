@@ -5,6 +5,50 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Fixed
+- **MCP wiring now lands where Claude Code actually reads it.** The wizard used to write the broker
+  `mcpServers` entry into `<project>/.claude/settings.json`, a location Claude Code ignores for MCP
+  servers — sessions in a freshly set-up project got no broker tools without a manual
+  `claude mcp add`. It now writes `<project>/.mcp.json` (project-scope MCP config), pre-approves
+  the server via `enabledMcpjsonServers` in `.claude/settings.json`, removes a stale `mcpServers`
+  block left by earlier versions, and adds `/.mcp.json` to the repo's local `.git/info/exclude`
+  so the bearer secret never lands in version control.
+
+### Added
+- **Cluster-orchestrator tier.** `npm run setup -- --clusters "platform:backend+api;consumer:frontend"`
+  scaffolds mid-level cluster orchestrators: each gets a `<ns>-<cluster>-orch` inbox, a private
+  `<ns>-<cluster>-status` worker feed (new `schemas/cluster-status.json`), a headless-safe role
+  (never prompts a human; consent escalates to the root orchestrator via `<ns>-status`), a
+  `workers.json` entry, and a session dir at `<project>/orchestrators/<cluster>/`. Clustered
+  workers report to their cluster feed; the root orchestrator role gains a cluster registry,
+  goal-level dispatch, and a consent-relay protocol.
+- **Patrol workers.** `--patrol <name[:interval[:watch-channel]]>` (repeatable) scaffolds
+  autonomous workers the watchdog wakes on an interval when the watch channel has news (QA
+  sweeps, cost review), with role file, inbox channel, schema, and `workers.json` entry using
+  the watchdog's existing `--patrol-interval` / `--patrol-watch-channel` flags.
+- **Per-worker model.** `workers.json` entries may carry a `"model"` field; `start_worker`
+  (MCP and HTTP) now uses it as the worker's default session model, still overridable by the
+  explicit `model` argument. The wizard stamps it with `--model <id>`; `list_workers` shows it.
+- **Multi-project merge.** Re-running setup for a second project on the same broker no longer
+  clobbers the first: `workers.json` keeps entries from other namespaces, `.env` `PRUNE_EXEMPT`
+  is unioned across namespaces, and colliding worker names are auto-prefixed with the namespace
+  (names are registry-wide keys for `start_worker`/tmux/logs; behavior is otherwise unchanged).
+- **Backlog and reviewer schemas.** New `schemas/backlog.json` (deferred/deferred-resolved/
+  retrospective envelope for the persistent `<ns>-backlog` and `<ns>-sprint-retrospective`
+  channels) and `schemas/reviewer-inbox.json` (review-task envelope requiring a
+  `base`/`head`/`checklist` body). The wizard now registers both, and the reviewer inbox uses the
+  dedicated schema instead of the generic worker-inbox one.
+- **`--strict` schema registration.** `npm run setup -- --strict` registers all starter schemas
+  with `strict: true` (malformed messages are rejected, not just warned about). Default remains
+  warn mode; the summary now says which mode was used.
+- **Orchestrator scope-guard hooks** (`--hooks` / `--no-hooks`, interactive prompt in worktree
+  modes). The wizard can add `PreToolUse` hooks to `<project>/.claude/settings.json` that deny
+  sessions at the project root direct `Edit`/`Write` or Bash-redirection access to worker-owned
+  directories, pointing them at the broker inboxes instead (`CLAUDE.md` files stay editable;
+  requires `jq`). Offered only with `--isolate`/`--multi-repo` — on a shared checkout the guard
+  would block the workers themselves. Re-runnable: previously generated entries are replaced,
+  other hooks are preserved.
+
 ### Changed
 - **Scaffolded role files now encode the full operational protocol**, not just the core loop. Worker
   roles gained: cold-start capability registration, idempotency-first (`check_result` before running),

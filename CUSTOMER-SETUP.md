@@ -54,7 +54,7 @@ The wizard scans the project for its components (backend, frontend, …), derive
 generates a strong `SHARED_SECRET`, and writes `.env` + `workers.json` for you. It's re-runnable
 and never overwrites an existing secret. Run it once now (before the broker is up) to write the
 config; run it again after step 3 and it will also register starter channel schemas on the running
-broker. It prints the exact `claude mcp add` command for step 4 at the end — copy that.
+broker (warn mode by default — add `--strict` to reject non-conforming messages instead). It prints the exact `claude mcp add` command for step 4 at the end — copy that.
 
 Included by default (each can be turned off):
 
@@ -67,9 +67,36 @@ Included by default (each can be turned off):
 - **Persistent channels** — `<ns>-backlog` and `<ns>-sprint-retrospective` are exempted from
   auto-pruning, giving the orchestrator durable deferred-task and sprint-history channels.
 - **MCP settings** (interactive prompt, or `--mcp-settings` / `--no-mcp-settings`) — writes the
-  broker connection into `<project>/.claude/settings.json` so sessions opened in the project get
-  the broker tools with no `claude mcp add`. Note this puts the secret in the project tree —
-  fine for a localhost broker on one machine; skip it for shared/remote setups.
+  broker connection into `<project>/.mcp.json` (the project-scope MCP config Claude Code reads)
+  and pre-approves it via `enabledMcpjsonServers` in `.claude/settings.json`, so sessions opened
+  in the project get the broker tools with no `claude mcp add`. `.mcp.json` carries the secret,
+  so setup adds it to the repo's local `.git/info/exclude` — fine for a localhost broker on one
+  machine; skip it for shared/remote setups.
+- **Per-worker model** (`--model <id>`, e.g. `--model claude-opus-4-7`) — stamps a `model` field
+  on every generated `workers.json` entry; `start_worker` uses it as that worker's default
+  session model (an explicit `start_worker` model argument still overrides). Without it, workers
+  run the watchdog default (`CLAUDE_MODEL`, falling back to Haiku).
+- **Patrol workers** (`--patrol <name[:interval[:watch-channel]]>`, repeatable, e.g.
+  `--patrol qa:1800`) — autonomous workers the watchdog wakes every `interval` seconds whenever
+  the watch channel (default `<ns>-status`) has new activity, in addition to normal inbox-driven
+  wakes. Gets its own `<project>/<name>/` session dir, role file, inbox channel, and schema.
+  Use for QA sweeps, cost review, and similar recurring beats.
+- **Cluster tier** (`--clusters "<cluster>:<comp>+<comp>[;<cluster>:...]"`, e.g.
+  `--clusters "platform:backend+api;consumer:frontend"`) — adds mid-level cluster orchestrators
+  between the root orchestrator and the workers, mirroring how large fleets are run: the root
+  dispatches sprint *goals* to `<ns>-<cluster>-orch`; each cluster orchestrator (headless-safe —
+  it never prompts a human, consent escalates to the root over `<ns>-status`) decomposes them and
+  runs its workers over a private `<ns>-<cluster>-status` feed. Clustered workers report to their
+  cluster feed instead of `<ns>-status`; unclustered components stay directly under the root.
+- **Multi-project brokers** — re-running setup for a second project on the same broker *merges*:
+  `workers.json` entries from other namespaces are kept, `PRUNE_EXEMPT` is unioned, and worker
+  names that collide across namespaces are auto-prefixed (`backend` → `<ns>-backend`).
+- **Scope-guard hooks** (worktree modes only; interactive prompt, or `--hooks` / `--no-hooks`) —
+  adds `PreToolUse` hooks to `<project>/.claude/settings.json` that deny any session at the
+  project root (i.e. the orchestrator) direct edits or Bash redirection into worker-owned
+  directories, with a reminder to dispatch via the broker instead. `CLAUDE.md` files stay
+  editable. Requires `jq`. Not offered on a shared checkout, where the guard would block the
+  workers themselves.
 
 > Prefer to do it by hand? `cp .env.example .env`, then
 > `echo "SHARED_SECRET=$(openssl rand -hex 32)" >> .env`. **The broker refuses to start without a

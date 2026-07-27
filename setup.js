@@ -14,9 +14,13 @@
  *   5. If the broker is already running, registers starter schemas on the channels.
  *   6. Prints the exact `claude mcp add` command to connect each session.
  *
- * Flags: --project <path>  --ns <prefix>  --port <n>  --no-schemas  --yes/-y
+ * Flags: --project <path>  --ns <prefix>  --port <n>  --no-schemas  --strict  --yes/-y
  *        --scaffold-roles  --install-roles  --isolate  --multi-repo  --worktree-base <path>
  *        --no-reviewer  --no-tmux  --tmux-session <name>  --mcp-settings / --no-mcp-settings
+ *        --hooks / --no-hooks (orchestrator scope-guard hooks; worktree modes only)
+ *        --model <id> (per-worker model stamped into workers.json)
+ *        --patrol <name[:interval[:watch-channel]]> (repeatable; autonomous patrol workers)
+ *        --clusters "<cluster>:<comp>+<comp>[;<cluster>:...]" (cluster-orchestrator tier)
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -37,16 +41,21 @@ const opts = {
   ns: flag("--ns"),
   port: flag("--port"),
   schemas: !has("--no-schemas"),
+  strictSchemas: has("--strict"),
   scaffoldRoles: has("--scaffold-roles"),
   installRoles: has("--install-roles"),
   isolate: has("--isolate"),
   multiRepo: has("--multi-repo"),
   worktreeBase: flag("--worktree-base"),
+  model: flag("--model"),
+  patrol: argv.flatMap((a, i) => (a === "--patrol" && argv[i + 1] ? [argv[i + 1]] : [])),
+  clusters: flag("--clusters"),
   rolesDir: flag("--roles-dir") || "roles",
   reviewer: !has("--no-reviewer"),
   tmux: !has("--no-tmux"),
   tmuxSession: flag("--tmux-session"),
   mcpSettings: has("--mcp-settings") ? true : has("--no-mcp-settings") ? false : null,
+  hooks: has("--hooks") ? true : has("--no-hooks") ? false : null,
   yes: has("--yes", "-y"),
 };
 const interactive = !opts.yes && process.stdin.isTTY;
@@ -167,7 +176,7 @@ function existingSecret() {
 }
 
 // ── schema registration (only if broker is reachable) ────────────────────────
-async function registerSchemas({ port, secret, ns, components, reviewer }) {
+async function registerSchemas({ port, secret, ns, components, reviewer, strict, patrols = [], clusters = null }) {
   const url = `http://localhost:${port}`;
   try {
     const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1500) });
@@ -184,27 +193,53 @@ async function registerSchemas({ port, secret, ns, components, reviewer }) {
     [`${ns}-status`, "status.json"],
     [`${ns}-telemetry`, "telemetry.json"],
     [`${ns}-control`, "control.json"],
+    [`${ns}-backlog`, "backlog.json"],
+    [`${ns}-sprint-retrospective`, "backlog.json"],
     ...components.map((comp) => [`${ns}-${comp}`, "worker-inbox.json"]),
-    ...(reviewer ? [[`${ns}-reviewer`, "worker-inbox.json"]] : []),
+    ...patrols.map((p) => [`${ns}-${p.name}`, "worker-inbox.json"]),
+    ...(clusters || []).flatMap((cl) => [
+      [`${ns}-${cl.name}-orch`, "worker-inbox.json"],
+      [`${ns}-${cl.name}-status`, "cluster-status.json"],
+    ]),
+    ...(reviewer ? [[`${ns}-reviewer`, "reviewer-inbox.json"]] : []),
   ];
   const done = [];
   for (const [channel, file] of plan) {
-    const res = await client.callTool({ name: "register_channel_schema", arguments: { channel, schema: read(file), strict: false, version: "1.0" } });
+    const res = await client.callTool({ name: "register_channel_schema", arguments: { channel, schema: read(file), strict: !!strict, version: "1.0" } });
     done.push({ channel, file, ok: !res.isError });
   }
   await client.close();
-  return { ran: true, done };
+  return { ran: true, done, strict: !!strict };
 }
 
 // ── role scaffolding (optional) ──────────────────────────────────────────────
 // Generates starter CLAUDE.md-style role files: one orchestrator + one per worker.
 // Written to a local roles/ dir — never into the customer's project.
-function orchestratorRole({ project, ns, port, components, reviewer }) {
-  const registry = components.map((w) => `| \`${w}\` | \`${ns}-${w}\` | the ${w} component |`)
+function orchestratorRole({ project, ns, port, components, reviewer, clusters }) {
+  const clustered = new Set((clusters || []).flatMap((cl) => cl.comps));
+  const direct = components.filter((w) => !clustered.has(w));
+  const registry = direct.map((w) => `| \`${w}\` | \`${ns}-${w}\` | the ${w} component |`)
+    .concat((clusters || []).map((cl) => `| \`${cl.name}-orch\` (cluster) | \`${ns}-${cl.name}-orch\` | ${cl.comps.join(", ")} — dispatch sprint GOALS here, not per-worker tasks |`))
     .concat(reviewer ? [`| \`reviewer\` | \`${ns}-reviewer\` | code review — reads diffs, posts findings, never edits files |`] : [])
     .join("\n");
-  const dispatch = components.map((w) => `\`${ns}-${w}\``).join(", ");
-  const firstWorker = components[0] || "backend";
+  const dispatch = direct.map((w) => `\`${ns}-${w}\``).join(", ");
+  const firstWorker = direct[0] || components[0] || "backend";
+  const clusterSection = clusters ? `
+## Cluster tier
+
+${clusters.map((cl) => `- **${cl.name}** (\`${cl.name}-orch\`, inbox \`${ns}-${cl.name}-orch\`): ${cl.comps.join(", ")}`).join("\n")}
+
+Clustered components are managed by their cluster orchestrator — do NOT dispatch per-worker
+tasks to them. Send each cluster a sprint **goal** (same task envelope, \`to: "<cluster>-orch"\`,
+\`body\` describing the outcome); the cluster orchestrator decomposes it, runs its workers via
+its own \`${ns}-<cluster>-status\` feed, and posts a cluster summary to \`${ns}-status\`.
+
+**Consent relay — you are the human gateway.** Cluster orchestrators are headless and never ask
+a human anything. When a \`type: question\` addressed to \`root-orchestrator\` appears on
+\`${ns}-status\` (consent for deploys, migrations, irreversible actions), put it to the human
+(AskUserQuestion), then send \`type: "consent-grant"\` or \`"consent-deny"\` to that cluster's
+\`${ns}-<cluster>-orch\` inbox.
+` : "";
   return `# Orchestrator — ${basename(project)}
 
 ## Identity
@@ -226,12 +261,11 @@ ${registry}
 
 - \`${ns}-orchestrator\` — your inbox (read every turn)
 - \`${ns}-control\` — broadcasts to all workers (send broadcasts here)
-- ${dispatch} — worker inboxes (dispatch tasks here)
-${reviewer ? `- \`${ns}-reviewer\` — code reviewer inbox (dispatch review tasks here)\n` : ""}- \`${ns}-status\` — firehose: workers post results + status here (monitor this)
+${direct.length ? `- ${dispatch} — worker inboxes (dispatch tasks here)\n` : ""}${clusters ? clusters.map((cl) => `- \`${ns}-${cl.name}-orch\` — ${cl.name} cluster orchestrator inbox (dispatch sprint goals here)`).join("\n") + "\n" : ""}${reviewer ? `- \`${ns}-reviewer\` — code reviewer inbox (dispatch review tasks here)\n` : ""}- \`${ns}-status\` — firehose: workers${clusters ? " + cluster orchestrators" : ""} post results + status here (monitor this)
 - \`${ns}-telemetry\` — heartbeats (monitor for liveness with \`get_latest_heartbeats\`)
 - \`${ns}-backlog\` — persistent deferred tasks — **NEVER purge**
 - \`${ns}-sprint-retrospective\` — permanent sprint history — **NEVER purge**
-
+${clusterSection}
 ## Turn-start ritual
 
 On the first turn of a session use \`since_id=0\` for every channel; remember the highest id seen
@@ -307,7 +341,9 @@ ${reviewer ? `- **Review gate**: before any sprint-close merge, dispatch a revie
 `;
 }
 
-function workerRole({ project, ns, port, worker, isolate }) {
+function workerRole({ project, ns, port, worker, isolate, statusChannel, orchestratorName }) {
+  const status = statusChannel || `${ns}-status`;
+  const orch = orchestratorName || "orchestrator";
   const branch = isolate ? `worker/${worker}` : "main";
   const stageCmd = isolate
     ? "git add -A   # safe — your worktree is private; the root CLAUDE.md is auto-excluded"
@@ -322,7 +358,7 @@ git fetch origin 2>/dev/null || true
 git branch --show-current      # MUST print "worker/${worker}"
 \`\`\`
 
-If it does not print \`worker/${worker}\`: post a \`type: question\` to \`${ns}-status\` and **STOP** —
+If it does not print \`worker/${worker}\`: post a \`type: question\` to \`${status}\` and **STOP** —
 do not start any task. Commit your work to \`worker/${worker}\`; the orchestrator merges it to the
 main branch at sprint close (\`sprint-close-merge.sh\`). Never switch branches or touch another
 worker's worktree.
@@ -341,13 +377,13 @@ ${gitSection}
 
 - \`${ns}-${worker}\` — your inbox (read first, every turn)
 - \`${ns}-control\` — orchestrator broadcasts (check every turn)
-- \`${ns}-status\` — post all results + status here
+- \`${status}\` — post all results + status here${status === `${ns}-status` ? "" : ` (your cluster's feed; \`${ns}-status\` is cross-cluster — don't post results there)`}
 - \`${ns}-telemetry\` — post heartbeats here
 
 ## Cold start (first turn of a session)
 
 Advertise what you own, once per session:
-\`register_capability(worker="${worker}", owns=["${worker}"], channels=["${ns}-${worker}", "${ns}-status", "${ns}-telemetry"])\`
+\`register_capability(worker="${worker}", owns=["${worker}"], channels=["${ns}-${worker}", "${status}", "${ns}-telemetry"])\`
 
 ## Turn-start ritual
 
@@ -357,10 +393,10 @@ Advertise what you own, once per session:
 2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — pick up broadcasts.
 3. **Rotate check.** If any message is \`type: "rotate"\`, follow the Rotation protocol below and exit.
 4. For each \`type: task\` addressed to \`${worker}\` or \`*\`:
-   - **Idempotency FIRST**: \`check_result(channel="${ns}-status", task_id=<id>)\`. If \`found: true\`,
+   - **Idempotency FIRST**: \`check_result(channel="${status}", task_id=<id>)\`. If \`found: true\`,
      post a \`type: note\` ("task <id> already done — skipping") and move on. Never re-run a task.
-   - **Dependency gate**: if \`depends_on\` is set, verify each dependency's result is on \`${ns}-status\`.
-     If missing: \`wait_for_messages(channel="${ns}-status", since_id=<last>, timeout_ms=270000)\`.
+   - **Dependency gate**: if \`depends_on\` is set, verify each dependency's result is on \`${status}\`.
+     If missing: \`wait_for_messages(channel="${status}", since_id=<last>, timeout_ms=270000)\`.
      Still missing after the wait → post \`type: status\` ("waiting on <dep>") and skip this task.
    - **Read the envelope before touching a file**: \`context\` + \`background\` (why), \`constraints\`
      (per-task do-NOTs — obey even when they conflict with your defaults), \`files.write\` (modify only
@@ -381,14 +417,14 @@ Report \`body.commits: [{sha, branch, message}]\`; if nothing changed, \`commits
 
 ## Reporting a result
 
-Post to \`${ns}-status\` (matches \`schemas/status.json\`):
+Post to \`${status}\` (matches \`schemas/${status === `${ns}-status` ? "status" : "cluster-status"}.json\`):
 
 \`\`\`json
 {
   "type": "result",
   "task_id": "<the task_id you were given>",
   "from": "${worker}",
-  "to": "orchestrator",
+  "to": "${orch}",
   "subject": "<same subject as the task>",
   "summary": "PASS — <=30 words | FAIL — <why> | SKIP — <reason>",
   "body": {
@@ -410,7 +446,7 @@ Post to \`${ns}-status\` (matches \`schemas/status.json\`):
 You run on demand: the watchdog starts you only when work is waiting. After posting a result:
 1. \`read_messages(channel="${ns}-${worker}", since_id=<last>)\` — drain any remaining tasks.
 2. Repeat until the inbox is empty.
-3. Post a \`type: status\` exit note ("inbox drained", last_task_id) to \`${ns}-status\`, then **exit**.
+3. Post a \`type: status\` exit note ("inbox drained", last_task_id) to \`${status}\`, then **exit**.
 
 \`wait_for_messages\` is ONLY for \`depends_on\` blocking — never for idle polling.
 
@@ -421,7 +457,7 @@ session that picks it up with a clean context.
 ## Rotation protocol
 
 On a \`type: "rotate"\` message, or when your context nears its limit: finish the current sub-task
-(post its result/status), post a \`type: status\` to \`${ns}-status\` with \`handoff_notes\` (current
+(post its result/status), post a \`type: status\` to \`${status}\` with \`handoff_notes\` (current
 task_id, done vs pending, files touched), then **exit**. The watchdog restarts you; the new session
 resumes from broker state.
 `;
@@ -508,13 +544,154 @@ exit note to \`${ns}-status\` and **exit**. The watchdog restarts you when new w
 `;
 }
 
-function scaffoldRoles({ project, ns, port, components, rolesDir, interactive, isolate, reviewer }) {
+// Patrol workers are autonomous: the watchdog wakes them every `interval` seconds when the
+// watch channel has news (and on inbox traffic, like any worker). QA sweeps, cost review, etc.
+function patrolRole({ project, ns, port, patrol }) {
+  const { name, interval, watch } = patrol;
+  return `# ${name} Patrol Worker — ${basename(project)}
+
+## Identity
+
+You are the **${name.toUpperCase()} PATROL WORKER** for \`${basename(project)}\`. You are autonomous:
+besides orchestrator tasks in your inbox, the watchdog wakes you every ~${interval}s whenever
+\`${watch}\` has new activity, so you can inspect recent work without being dispatched.
+You advise — post findings, never rewrite other workers' code.
+
+The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`).
+
+## Channels
+
+- \`${ns}-${name}\` — your inbox (read first, every turn)
+- \`${ns}-control\` — orchestrator broadcasts (check every turn)
+- \`${watch}\` — your patrol beat: read what changed since your last patrol
+- \`${ns}-status\` — post all findings + results here
+- \`${ns}-telemetry\` — post heartbeats here
+
+## Turn-start ritual
+
+1. \`turn_start(inbox_channel="${ns}-${name}", telemetry_channel="${ns}-telemetry", worker="${name}", ...)\`.
+2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — broadcasts; on \`type: rotate\`, exit cleanly.
+3. Handle any \`type: task\` in your inbox first (idempotency check via
+   \`check_result(channel="${ns}-status", task_id=<id>)\` before running; report like a normal worker).
+4. If the inbox is empty, this wake IS your patrol — do a patrol pass (below).
+
+## Patrol pass
+
+1. \`read_messages(channel="${watch}", since_id=<last patrol cursor>)\` — what the team did since your last pass.
+2. Inspect the affected areas of \`${project}\` read-only; run the project's checks where relevant
+   (tests, lint, budget/cost review — whatever the ${name} beat covers; refine this list for your project).
+3. Post one \`type: result\` to \`${ns}-status\` with \`task_id: "${name}-patrol-<YYYY-MM-DD-HHmm>"\`,
+   \`summary: "PASS — …"\` or \`"FAIL — <finding>"\`, and a \`body.findings\` array (severity, file, issue).
+   Nothing to report → \`summary: "PASS — patrol clean"\` and an empty findings array.
+4. Never patrol the same watch-channel messages twice — advance your cursor.
+
+## Idle — drain and exit (do NOT idle-poll)
+
+One patrol pass (or a drained inbox) per wake: post your result, then **exit**. The watchdog
+handles the schedule — you never sleep or loop waiting for the next interval.
+`;
+}
+
+// Cluster orchestrators sit between the root orchestrator and their cluster's workers.
+// Headless-safe: they never ask a human anything — consent escalates to the root.
+function clusterOrchestratorRole({ project, ns, port, cluster, reviewer }) {
+  const { name, comps } = cluster;
+  const statusCh = `${ns}-${name}-status`;
+  const inbox = `${ns}-${name}-orch`;
+  const registry = comps.map((w) => `| \`${w}\` | \`${ns}-${w}\` |`).join("\n");
+  return `# ${name} Cluster Orchestrator — ${basename(project)}
+
+## Identity
+
+You are the **${name.toUpperCase()} CLUSTER ORCHESTRATOR** for \`${basename(project)}\`. You sit
+between the root orchestrator and the ${name} workers: you receive sprint goals on \`${inbox}\`,
+decompose them into tasks, dispatch to your cluster's workers, track progress, and post a cluster
+summary back to \`${ns}-status\` for the root. You do **NOT** write code.
+
+**You are headless-safe.** Never call \`AskUserQuestion\` — no human is watching this session.
+Any consent decision (prod deploys, migrations, irreversible actions) escalates to the root:
+post \`type: "question", to: "root-orchestrator"\` on \`${ns}-status\` and wait for a
+\`consent-grant\` / \`consent-deny\` in your inbox before proceeding.
+
+The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`).
+
+## Cluster ownership — dispatch ONLY to these workers
+
+| Worker | Inbox |
+|---|---|
+${registry}
+
+Work for components outside your cluster → post a \`type: question\` to \`${ns}-status\` addressed
+to \`root-orchestrator\`; never cross cluster boundaries yourself.
+
+## Channels (keep an independent \`since_id\` cursor per channel)
+
+- \`${inbox}\` — your inbox: goals + consent grants from root
+- \`${ns}-control\` — broadcasts (check every turn)
+- \`${statusCh}\` — your workers' feed: they post status/results here (monitor this)
+- \`${ns}-status\` — cross-cluster: post cluster summaries + escalations here; do NOT use it for intra-cluster monitoring
+- \`${ns}-telemetry\` — post your heartbeats here
+
+## Turn-start ritual
+
+0. Cold start only: \`register_capability(worker="${name}-orch", owns=[${JSON.stringify(name + "-cluster")}, ${comps.map((x) => JSON.stringify(x)).join(", ")}], channels=["${inbox}", "${statusCh}", "${ns}-status", "${ns}-telemetry"])\`.
+1. \`turn_start(inbox_channel="${inbox}", control_channel="${ns}-control", inbox_since_id=<last>, control_since_id=<last>)\`
+   — if \`rotate_requested\`, follow the Rotation protocol.
+2. \`read_messages(channel="${statusCh}", since_id=<last>)\` — update your cluster ledger
+   (\`task_id → {worker, status, blockers, depends_on, dispatched_at}\`) from results and checkpoints.
+   **Consent intercept**: a worker \`type: question\` mentioning consent → relay it to \`${ns}-status\`
+   (\`to: "root-orchestrator"\`), wait for the grant in your inbox, forward it to the worker verbatim.
+3. Handle root's \`type: task\` / \`type: question\` from your inbox; dispatch worker tasks as needed.
+
+## Dispatching
+
+Use the standard task envelope (see \`schemas/worker-inbox.json\`): one task = one deliverable,
+\`task_id = <slug>-<YYYY-MM-DD>\`, always \`context\`, \`acceptance_criteria\`, \`files.write\`,
+\`constraints\`; chain with \`depends_on\`. Your workers post results to \`${statusCh}\`.
+
+## Cluster close (per sprint goal)
+
+1. Confirm every dispatched task_id has \`type: result\` on \`${statusCh}\` and each result's body
+   satisfies the task's \`acceptance_criteria\`.
+${reviewer ? `2. Dispatch a review task to \`${ns}-reviewer\` (\`body: {"base": "main", "head": "HEAD", "checklist": [...]}\`),
+   then \`wait_for_messages(channel="${ns}-status", filter_sender="reviewer", filter_type="result", timeout_ms=300000)\`.
+   Verdict \`"block"\` → do NOT post the cluster summary; fix blocking findings first.
+3. ` : `2. `}Post the cluster completion summary (\`type: result\`, \`from: "${name}-orch"\`, \`to: "root-orchestrator"\`)
+   to \`${ns}-status\`.
+
+## Idle — two-phase loop, then park
+
+After dispatching, loop:
+1. \`has_messages("${inbox}", since_id=<last>)\` — root sent something? Read and handle it.
+2. \`wait_for_messages(channel="${statusCh}", since_id=<last>, filter_type="result", timeout_ms=25000)\`
+   — wake on actual worker results, not notes/heartbeats.
+After **3 consecutive empty polls with no open tasks in the ledger**: post an idle heartbeat to
+\`${ns}-telemetry\` and **exit** — the watchdog restarts you when new work arrives.
+
+## Rotation
+
+On \`rotate_requested\` or context past ~150k tokens: post a ledger snapshot (\`type: status\`,
+open task_ids + state) to \`${statusCh}\` AND \`${ns}-status\`, heartbeat \`state: "rotating"\`, exit.
+`;
+}
+
+function scaffoldRoles({ project, ns, port, components, rolesDir, interactive, isolate, reviewer, patrols = [], clusters = null }) {
   const dir = resolve(OUT_DIR, rolesDir);
   mkdirSync(dir, { recursive: true });
   const written = [];
+  const clusterFor = (w) => clusters?.find((cl) => cl.comps.includes(w)) || null;
   const files = [
-    ["orchestrator.md", orchestratorRole({ project, ns, port, components, reviewer })],
-    ...components.map((w) => [`${w}.md`, workerRole({ project, ns, port, worker: w, isolate })]),
+    ["orchestrator.md", orchestratorRole({ project, ns, port, components, reviewer, clusters })],
+    ...components.map((w) => {
+      const cl = clusterFor(w);
+      return [`${w}.md`, workerRole({
+        project, ns, port, worker: w, isolate,
+        statusChannel: cl ? `${ns}-${cl.name}-status` : undefined,
+        orchestratorName: cl ? `${cl.name}-orch` : undefined,
+      })];
+    }),
+    ...patrols.map((p) => [`${p.name}.md`, patrolRole({ project, ns, port, patrol: p })]),
+    ...(clusters || []).map((cl) => [`${cl.name}-orch.md`, clusterOrchestratorRole({ project, ns, port, cluster: cl, reviewer })]),
     ...(reviewer ? [["reviewer.md", reviewerRole({ project, ns, port })]] : []),
   ];
   for (const [name, content] of files) {
@@ -547,28 +724,33 @@ function installRoles({ baseDir, components, rolesDir }) {
   return results;
 }
 
-// The reviewer has no component dir of its own — it lives in <project>/reviewer/ (created
-// here) and reviews the main checkout read-only, so it is safe in every isolation mode.
-function installReviewerRole({ project, rolesDir }) {
-  const src = resolve(OUT_DIR, rolesDir, "reviewer.md");
-  const destDir = join(project, "reviewer");
+// Installs a role whose session dir does not pre-exist in the project (reviewer, patrol
+// workers, cluster orchestrators): creates <project>/<destSubdir>/ and drops the role in
+// as CLAUDE.md. These always run against the main checkout, never a worktree.
+function installStandaloneRole({ project, rolesDir, roleFile, destSubdir, label }) {
+  const src = resolve(OUT_DIR, rolesDir, roleFile);
+  const destDir = join(project, destSubdir);
   const dest = join(destDir, "CLAUDE.md");
-  if (!existsSync(src)) return { comp: "reviewer", status: "no role file" };
-  if (existsSync(dest)) return { comp: "reviewer", status: "skipped — CLAUDE.md exists" };
+  if (!existsSync(src)) return { comp: label, status: "no role file" };
+  if (existsSync(dest)) return { comp: label, status: "skipped — CLAUDE.md exists" };
   mkdirSync(destDir, { recursive: true });
   writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
-  return { comp: "reviewer", status: "installed", path: dest.replace(dirname(project) + "/", "") };
+  return { comp: label, status: "installed", path: dest.replace(dirname(project) + "/", "") };
+}
+function installReviewerRole({ project, rolesDir }) {
+  return installStandaloneRole({ project, rolesDir, roleFile: "reviewer.md", destSubdir: "reviewer", label: "reviewer" });
 }
 
-// Wire the broker into a repo's .claude/settings.json (merge-preserving). Local-only:
-// the file carries the bearer secret, which is fine for a localhost broker.
-function writeMcpSettings(repoRoot, port, secret) {
-  const dir = join(repoRoot, ".claude");
-  const p = join(dir, "settings.json");
+// Wire the broker into a repo via .mcp.json at the repo root — the only project-level
+// file Claude Code reads MCP servers from (.claude/settings.json mcpServers is ignored).
+// Also pre-approves the server through enabledMcpjsonServers so sessions don't prompt,
+// and git-excludes .mcp.json locally since it carries the bearer secret.
+function writeMcpConfig(repoRoot, port, secret) {
+  const p = join(repoRoot, ".mcp.json");
   let cfg = {};
   if (existsSync(p)) {
     try { cfg = JSON.parse(readFileSync(p, "utf8")); }
-    catch { return { path: p, status: "skipped — existing file is not valid JSON" }; }
+    catch { return { path: p, status: "skipped — existing .mcp.json is not valid JSON" }; }
   }
   cfg.mcpServers = cfg.mcpServers || {};
   cfg.mcpServers.broker = {
@@ -576,9 +758,77 @@ function writeMcpSettings(repoRoot, port, secret) {
     url: `http://localhost:${port}/mcp`,
     headers: { Authorization: `Bearer ${secret}` },
   };
-  mkdirSync(dir, { recursive: true });
   writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+
+  // The secret must not land in version control: ignore .mcp.json locally (no-op if
+  // already tracked or not a git repo — then the summary warning below still applies).
+  const excludePath = join(repoRoot, ".git", "info", "exclude");
+  if (existsSync(join(repoRoot, ".git"))) {
+    try {
+      mkdirSync(dirname(excludePath), { recursive: true });
+      const cur = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
+      if (!cur.split("\n").includes("/.mcp.json")) writeFileSync(excludePath, cur + (cur.endsWith("\n") || !cur ? "" : "\n") + "/.mcp.json\n", "utf8");
+    } catch { /* best-effort */ }
+  }
+
+  // settings.json: pre-approve the broker server; drop a stale mcpServers block that an
+  // older setup.js wrote there (Claude Code never read it).
+  const sDir = join(repoRoot, ".claude");
+  const sPath = join(sDir, "settings.json");
+  let s = {};
+  if (existsSync(sPath)) {
+    try { s = JSON.parse(readFileSync(sPath, "utf8")); }
+    catch { return { path: p, status: "written (settings.json invalid JSON — approve the broker server manually on first session)" }; }
+  }
+  if (s.mcpServers) { delete s.mcpServers.broker; if (!Object.keys(s.mcpServers).length) delete s.mcpServers; }
+  s.enabledMcpjsonServers = [...new Set([...(s.enabledMcpjsonServers || []), "broker"])];
+  mkdirSync(sDir, { recursive: true });
+  writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n", "utf8");
   return { path: p, status: "written" };
+}
+
+// Scope-guard hooks: deny the orchestrator (any session at the project root) direct edits
+// to worker-owned directories — work there must be dispatched via the broker. Only safe in
+// worktree modes: on a shared checkout the workers themselves run inside <project>/<comp>
+// and would be blocked by their own guard. CLAUDE.md files stay editable (role updates).
+// Re-runnable: previously generated entries are recognized by statusMessage and replaced.
+const GUARD_EDIT_MSG = "Checking orchestrator scope boundary (Edit/Write)...";
+const GUARD_BASH_MSG = "Checking orchestrator scope boundary (Bash)...";
+function writeScopeGuardHooks({ project, ns, components }) {
+  const sDir = join(project, ".claude");
+  const sPath = join(sDir, "settings.json");
+  let s = {};
+  if (existsSync(sPath)) {
+    try { s = JSON.parse(readFileSync(sPath, "utf8")); }
+    catch { return { path: sPath, status: "skipped — existing settings.json is not valid JSON" }; }
+  }
+  const group = components.join("|");
+  const inboxes = components.map((w) => `${ns}-${w}`).join(" / ");
+  const deny = (reason) =>
+    `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"${reason}"}}`;
+  const editEntry = {
+    matcher: "Edit|Write",
+    hooks: [{
+      type: "command",
+      command: `path=$(jq -r '.tool_input.file_path // ""' 2>/dev/null); [[ "$path" =~ ${project}/(${group})/ ]] && [[ "$path" != */CLAUDE.md ]] && echo '${deny(`Orchestrator must not edit worker directories directly. Dispatch via broker to the appropriate worker inbox (${inboxes}). Exception: CLAUDE.md files may be edited directly.`)}' && exit 1; exit 0`,
+      statusMessage: GUARD_EDIT_MSG,
+    }],
+  };
+  const bashEntry = {
+    matcher: "Bash",
+    hooks: [{
+      type: "command",
+      command: `cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null); echo "$cmd" | grep -qE '(>>|>|tee )\\s*${project}/(${group})/' && echo '${deny("Orchestrator must not write to worker directories via Bash redirection. Dispatch via broker to the appropriate worker.")}' && exit 1; exit 0`,
+      statusMessage: GUARD_BASH_MSG,
+    }],
+  };
+  s.hooks = s.hooks || {};
+  const kept = (s.hooks.PreToolUse || []).filter(
+    (e) => !(e.hooks || []).some((h) => h.statusMessage === GUARD_EDIT_MSG || h.statusMessage === GUARD_BASH_MSG));
+  s.hooks.PreToolUse = [...kept, editEntry, bashEntry];
+  mkdirSync(sDir, { recursive: true });
+  writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n", "utf8");
+  return { path: sPath, status: "written" };
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -628,6 +878,44 @@ async function main() {
   const ns = (opts.ns || (await ask("Namespace prefix (short, lowercase)", deriveNs(project)))).toLowerCase().replace(/[^a-z0-9]/g, "");
   const port = Number(opts.port || (await ask("Broker port", "8080"))) || 8080;
 
+  // 3b. Patrol workers — autonomous sessions the watchdog wakes on an interval (QA, cost
+  // review, SEO checks) in addition to inbox-driven wakes. --patrol name[:interval[:watch]].
+  const patrols = opts.patrol.map((raw) => {
+    const [name, interval, watch] = raw.split(":");
+    return { name: sanitizeName(name), interval: Number(interval) || 1800, watch: watch || `${ns}-status` };
+  });
+  for (const p of patrols) {
+    if (!p.name || components.includes(p.name) || p.name === "reviewer") {
+      line(c.y(`  Invalid --patrol name "${p.name}" (empty, or collides with a component/reviewer).`)); if (rl) rl.close(); process.exit(1);
+    }
+  }
+
+  // 3c. Cluster tier — group components under mid-level orchestrators so the root
+  // orchestrator dispatches sprint goals per cluster instead of per worker.
+  // --clusters "platform:backend+devops;consumer:frontend"
+  let clusters = null;
+  if (opts.clusters) {
+    clusters = opts.clusters.split(";").map((s) => {
+      const [name, comps] = s.split(":");
+      return { name: sanitizeName(name || ""), comps: (comps || "").split("+").map((x) => sanitizeName(x.trim())).filter(Boolean) };
+    }).filter((cl) => cl.name);
+    const seen = new Set();
+    for (const cl of clusters) {
+      if (components.includes(cl.name) || !cl.comps.length) {
+        line(c.y(`  Invalid cluster "${cl.name}" (collides with a component, or has no members).`)); if (rl) rl.close(); process.exit(1);
+      }
+      for (const comp of cl.comps) {
+        if (!components.includes(comp)) { line(c.y(`  Cluster "${cl.name}" member "${comp}" is not a detected component (${components.join(", ")}).`)); if (rl) rl.close(); process.exit(1); }
+        if (seen.has(comp)) { line(c.y(`  Component "${comp}" appears in two clusters.`)); if (rl) rl.close(); process.exit(1); }
+        seen.add(comp);
+      }
+    }
+    if (!clusters.length) clusters = null;
+  }
+  // Which status channel a component reports to: its cluster's feed, or the global one.
+  const clusterOf = (comp) => clusters?.find((cl) => cl.comps.includes(comp)) || null;
+  const statusChannelFor = (comp) => { const cl = clusterOf(comp); return cl ? `${ns}-${cl.name}-status` : `${ns}-status`; };
+
   // 4. Secret (preserve existing)
   const preserved = existingSecret();
   const secret = preserved || randomBytes(32).toString("hex");
@@ -640,6 +928,12 @@ async function main() {
   }
   const tmuxBin = opts.tmux ? findTmux() : null;
   const tmuxSession = opts.tmuxSession || "claude-broker";
+  // Union with any existing exemptions so a second project's setup keeps the first
+  // project's backlog/retrospective channels prune-exempt.
+  const prevPrune = existsSync(envPath)
+    ? (readFileSync(envPath, "utf8").match(/^PRUNE_EXEMPT=(.*)$/m)?.[1] || "").split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const pruneExempt = [...new Set([...prevPrune, `${ns}-backlog`, `${ns}-sprint-retrospective`])].join(",");
   if (writeEnv) {
     const env = [
       `# Generated by \`npm run setup\` for ${basename(project)}`,
@@ -650,7 +944,7 @@ async function main() {
       `# Channel layout for this project`,
       `TELEMETRY_CHANNEL=${ns}-telemetry`,
       `RATE_LIMIT_CHANNEL=${ns}-rate-limits`,
-      `PRUNE_EXEMPT=${ns}-backlog,${ns}-sprint-retrospective`,
+      `PRUNE_EXEMPT=${pruneExempt}`,
       ``,
       `# Worker roster (list_workers reads this).`,
       `WORKERS_CONFIG=./workers.json`,
@@ -696,28 +990,74 @@ async function main() {
   }
 
   // 6. Write workers.json — worktree modes point each worker at its own worktree.
-  const workers = components.map((comp) => ({
+  const withModel = (w) => (opts.model ? { ...w, model: opts.model } : w);
+  const workers = components.map((comp) => withModel({
     name: comp, ns,
     args: useWorktrees
       ? [comp, "--work-dir", join(worktreeBase, comp), "--inbox-channel", `${ns}-${comp}`]
       : [comp, "--repo-root", project, "--inbox-channel", `${ns}-${comp}`],
   }));
   // The reviewer always runs against the main checkout (read-only), never a worktree.
-  if (opts.reviewer) workers.push({ name: "reviewer", ns, args: ["reviewer", "--repo-root", project, "--inbox-channel", `${ns}-reviewer`] });
+  if (opts.reviewer) workers.push(withModel({ name: "reviewer", ns, args: ["reviewer", "--repo-root", project, "--inbox-channel", `${ns}-reviewer`] }));
+  // Patrol workers run against the main checkout too — the watchdog wakes them on the
+  // interval (when the watch channel has news) as well as on inbox traffic.
+  for (const p of patrols) {
+    workers.push(withModel({
+      name: p.name, ns,
+      args: [p.name, "--repo-root", project, "--inbox-channel", `${ns}-${p.name}`,
+             "--patrol-interval", String(p.interval), "--patrol-watch-channel", p.watch],
+    }));
+  }
+  // Cluster orchestrators live at <project>/orchestrators/<cluster> (main checkout).
+  for (const cl of clusters || []) {
+    workers.push(withModel({
+      name: `${cl.name}-orch`, ns,
+      args: [`orchestrators/${cl.name}`, "--repo-root", project, "--inbox-channel", `${ns}-${cl.name}-orch`],
+    }));
+  }
   const workersPath = join(OUT_DIR, "workers.json");
+  // One broker can serve several projects: entries from OTHER namespaces are always kept,
+  // so a second `npm run setup` never clobbers the first project's fleet.
+  let keptWorkers = [];
   let writeWorkers = true;
-  if (existsSync(workersPath) && interactive) writeWorkers = await askYesNo("workers.json exists — overwrite it?", true);
-  if (writeWorkers) writeFileSync(workersPath, JSON.stringify(workers, null, 2) + "\n", "utf8");
+  if (existsSync(workersPath)) {
+    let existing = null;
+    try { existing = JSON.parse(readFileSync(workersPath, "utf8")); } catch { /* unparseable → treat as plain overwrite below */ }
+    if (Array.isArray(existing)) {
+      keptWorkers = existing.filter((w) => w && w.ns && w.ns !== ns);
+      const replacing = existing.length - keptWorkers.length;
+      if (interactive) {
+        writeWorkers = await askYesNo(
+          keptWorkers.length
+            ? `workers.json exists — replace its ${replacing} "${ns}" worker(s) and keep the ${keptWorkers.length} from other namespaces?`
+            : "workers.json exists — overwrite it?", true);
+      }
+    } else if (interactive) {
+      writeWorkers = await askYesNo("workers.json exists (not a valid worker array) — overwrite it?", true);
+    }
+  }
+  // start_worker / tmux windows / logs are keyed by name, so names must be unique across
+  // namespaces. On collision with a kept worker, prefix ours with the namespace (the
+  // worker's session dir and inbox channel come from args, so behavior is unchanged).
+  let renamedWorkers = [];
+  if (writeWorkers && keptWorkers.length) {
+    const taken = new Set(keptWorkers.map((w) => w.name));
+    for (const w of workers) {
+      if (taken.has(w.name)) { const nn = `${ns}-${w.name}`; renamedWorkers.push(`${w.name} → ${nn}`); w.name = nn; }
+      taken.add(w.name);
+    }
+  }
+  if (writeWorkers) writeFileSync(workersPath, JSON.stringify([...keptWorkers, ...workers], null, 2) + "\n", "utf8");
 
   // 7. Register starter schemas (best-effort, only if broker is up)
   let schemaResult = { ran: false, reason: "skipped (--no-schemas)" };
-  if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components, reviewer: opts.reviewer });
+  if (opts.schemas) schemaResult = await registerSchemas({ port, secret, ns, components, reviewer: opts.reviewer, strict: opts.strictSchemas, patrols, clusters });
 
   // 7b. Scaffold role files. --install-roles, --isolate, --multi-repo all imply scaffolding.
   let roles = null;
   const wantScaffold = opts.scaffoldRoles || opts.installRoles || useWorktrees ||
     (interactive && (await askYesNo("Scaffold starter orchestrator + worker role files?", false)));
-  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: useWorktrees, reviewer: opts.reviewer });
+  if (wantScaffold) roles = scaffoldRoles({ project, ns, port, components, rolesDir: opts.rolesDir, interactive, isolate: useWorktrees, reviewer: opts.reviewer, patrols, clusters });
 
   // 7c. Install worker role files as CLAUDE.md where each session runs.
   // Worktree modes → the worktree root (auto). Otherwise → the project's component dir (opt-in).
@@ -728,17 +1068,35 @@ async function main() {
   if (roles && doInstall) {
     installed = installRoles({ baseDir: installBase, components, rolesDir: opts.rolesDir });
     if (opts.reviewer) installed.push(installReviewerRole({ project, rolesDir: opts.rolesDir }));
+    for (const p of patrols) {
+      installed.push(installStandaloneRole({ project, rolesDir: opts.rolesDir, roleFile: `${p.name}.md`, destSubdir: p.name, label: p.name }));
+    }
+    for (const cl of clusters || []) {
+      installed.push(installStandaloneRole({ project, rolesDir: opts.rolesDir, roleFile: `${cl.name}-orch.md`, destSubdir: join("orchestrators", cl.name), label: `${cl.name}-orch` }));
+    }
   }
 
-  // 7d. Wire the broker into the project's .claude/settings.json so sessions opened
-  // there get the mcp__broker__* tools with no manual `claude mcp add`.
+  // 7d. Wire the broker into the project's .mcp.json so sessions opened there get
+  // the mcp__broker__* tools with no manual `claude mcp add`.
   let mcpWritten = null;
   const doMcp = opts.mcpSettings === true ||
     (opts.mcpSettings !== false && interactive &&
-      (await askYesNo(`Write broker MCP config into ${basename(project)}/.claude/settings.json? (writes the secret into the project — fine for a local broker)`, true)));
+      (await askYesNo(`Write broker MCP config into ${basename(project)}/.mcp.json? (carries the secret; git-excluded locally — fine for a local broker)`, true)));
   if (doMcp) {
     const targets = opts.multiRepo ? components.map(repoPathFor) : [project];
-    mcpWritten = targets.map((t) => writeMcpSettings(t, port, secret));
+    mcpWritten = targets.map((t) => writeMcpConfig(t, port, secret));
+  }
+
+  // 7e. Scope-guard hooks — keep the orchestrator out of worker-owned directories.
+  // Worktree modes only: on a shared checkout the guard would block the workers themselves.
+  let hooksWritten = null;
+  if (useWorktrees) {
+    const doHooks = opts.hooks === true ||
+      (opts.hooks !== false && interactive &&
+        (await askYesNo(`Add scope-guard hooks to ${basename(project)}/.claude/settings.json? (denies the orchestrator direct edits in worker dirs — dispatch via broker instead)`, true)));
+    if (doHooks) hooksWritten = writeScopeGuardHooks({ project, ns, components });
+  } else if (opts.hooks === true) {
+    line(c.y("  • --hooks skipped: scope-guard hooks need --isolate or --multi-repo (on a shared checkout they would block the workers themselves)."));
   }
 
   if (rl) rl.close();
@@ -747,6 +1105,8 @@ async function main() {
   const channels = [
     `${ns}-status`, `${ns}-control`, `${ns}-telemetry`,
     ...components.map((x) => `${ns}-${x}`),
+    ...patrols.map((p) => `${ns}-${p.name}`),
+    ...(clusters || []).flatMap((cl) => [`${ns}-${cl.name}-orch`, `${ns}-${cl.name}-status`]),
     ...(opts.reviewer ? [`${ns}-reviewer`] : []),
     `${ns}-backlog`, `${ns}-sprint-retrospective`,
   ];
@@ -755,8 +1115,11 @@ async function main() {
   line();
   line(`  ${c.b("Project")}     ${project}`);
   line(`  ${c.b("Namespace")}   ${ns}`);
-  line(`  ${c.b("Components")}  ${components.join(", ")}${opts.reviewer ? " (+ reviewer)" : ""}`);
-  line(`  ${c.b("Wrote")}       ${writeEnv ? ".env" : "(kept .env)"}, ${writeWorkers ? "workers.json" : "(kept workers.json)"}`);
+  line(`  ${c.b("Components")}  ${components.join(", ")}${patrols.length ? ` (+ patrol: ${patrols.map((p) => `${p.name}@${p.interval}s`).join(", ")})` : ""}${opts.reviewer ? " (+ reviewer)" : ""}`);
+  if (clusters) line(`  ${c.b("Clusters")}    ${clusters.map((cl) => `${cl.name}[${cl.comps.join(",")}]`).join("  ")}`);
+  if (opts.model) line(`  ${c.b("Model")}       ${opts.model} (per-worker default in workers.json; start_worker model arg overrides)`);
+  line(`  ${c.b("Wrote")}       ${writeEnv ? ".env" : "(kept .env)"}, ${writeWorkers ? "workers.json" : "(kept workers.json)"}${keptWorkers.length ? ` (kept ${keptWorkers.length} worker(s) from other namespaces)` : ""}`);
+  if (renamedWorkers.length) line(`  ${c.b("Renamed")}     ${renamedWorkers.join(", ")} ${c.dim("(worker names are registry-wide; behavior unchanged)")}`);
   line(`  ${c.b("Channels")}    ${channels.join(", ")}`);
   if (opts.multiRepo) {
     line(`  ${c.b("Isolation")}   multi-repo: one worktree per repo under ${worktreeBase} (branch worker/<name>)`);
@@ -776,13 +1139,14 @@ async function main() {
   }
   if (schemaResult.ran) {
     const ok = schemaResult.done.filter((d) => d.ok).length;
-    line(`  ${c.g("✓")} Registered ${ok}/${schemaResult.done.length} starter schemas (warn mode) on the running broker.`);
+    line(`  ${c.g("✓")} Registered ${ok}/${schemaResult.done.length} starter schemas (${schemaResult.strict ? "strict" : "warn"} mode) on the running broker.`);
+    if (!schemaResult.strict) line(`    ${c.dim("Malformed messages warn but still deliver. Re-run with --strict to reject them instead.")}`);
   } else {
     line(`  ${c.y("•")} Schemas not registered — ${schemaResult.reason}.`);
     line(`    Start the broker (${c.b("npm start")}), then re-run ${c.b("npm run setup")} to register them.`);
   }
   if (roles) {
-    line(`  ${c.g("✓")} Scaffolded ${roles.written.length} role files in ${c.b(roles.dir + "/")} (orchestrator + ${components.length} worker${components.length === 1 ? "" : "s"}).`);
+    line(`  ${c.g("✓")} Scaffolded ${roles.written.length} role files in ${c.b(roles.dir + "/")} (orchestrator + ${components.length} worker${components.length === 1 ? "" : "s"}${patrols.length ? ` + ${patrols.length} patrol` : ""}${clusters ? ` + ${clusters.length} cluster orchestrator${clusters.length === 1 ? "" : "s"}` : ""}).`);
     if (!installed) line(`    ${c.dim("Use each file as the CLAUDE.md / system prompt for that session (see below).")}`);
   }
   if (installed) {
@@ -799,14 +1163,18 @@ async function main() {
   }
   if (mcpWritten) {
     for (const w of mcpWritten) {
-      line(`  ${w.status === "written" ? c.g("✓") : c.y("•")} MCP settings ${w.status}: ${w.path}`);
+      line(`  ${w.status === "written" ? c.g("✓") : c.y("•")} MCP config ${w.status}: ${w.path}`);
     }
+  }
+  if (hooksWritten) {
+    line(`  ${hooksWritten.status === "written" ? c.g("✓") : c.y("•")} Scope-guard hooks ${hooksWritten.status}: ${hooksWritten.path}`);
+    if (hooksWritten.status === "written") line(`    ${c.dim("Sessions at the project root are denied direct edits in worker dirs — dispatch via broker. Requires jq.")}`);
   }
   line();
   line(c.b("  Next steps:"));
   line(`    1. Start the broker:   ${c.b("npm start")}`);
   if (mcpWritten && mcpWritten.some((w) => w.status === "written")) {
-    line(`    2. Sessions opened inside the project pick up the broker automatically (.claude/settings.json).`);
+    line(`    2. Sessions opened inside the project pick up the broker automatically (.mcp.json).`);
     line(c.dim(`       For sessions elsewhere: claude mcp add --transport http broker http://localhost:${port}/mcp \\`));
     line(c.dim(`         --header "Authorization: Bearer ${secret}"`));
   } else {

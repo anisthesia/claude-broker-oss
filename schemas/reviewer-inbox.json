@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reviewer inbox envelope",
+  "description": "Messages dispatched into the reviewer inbox (<ns>-reviewer). Reviewers only receive review tasks with a base/head/checklist body — question, note, and rotate types are not used for reviewers.",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject", "body"],
+  "properties": {
+    "type": {
+      "enum": ["task"],
+      "description": "Reviewers only receive tasks."
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task identifier, e.g. review-sprint-close-2026-07-27."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Dispatcher identity, typically 'orchestrator'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target: 'reviewer' or '*' for broadcast."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {
+      "type": "object",
+      "required": ["base", "head", "checklist"],
+      "properties": {
+        "base": { "type": "string", "minLength": 1, "description": "Base ref, typically 'main'." },
+        "head": { "type": "string", "minLength": 1, "description": "Head ref to review, typically 'HEAD' or a worker branch." },
+        "checklist": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Review checklist items beyond the reviewer's default checklist."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Review task body — the reviewer diffs base..head and works the checklist."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 3 },
+      "description": "Optional: task dependencies."
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional: explanation of why this review exists."
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "read": { "type": "array", "items": { "type": "string" } },
+        "write": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false,
+      "description": "Optional: file scope (reviewers never write)."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "run", "pass_condition"],
+        "properties": {
+          "name": { "type": "string" },
+          "run": { "type": "string", "description": "Exact shell command to execute." },
+          "pass_condition": { "type": "string", "description": "What a passing result looks like." }
+        },
+        "additionalProperties": false
+      },
+      "description": "Optional: executable checks with pass conditions."
+    }
+  },
+  "additionalProperties": false
+}

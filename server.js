@@ -336,7 +336,9 @@ function expandArgs(args) {
 
 // Shared watchdog spawn logic. Throws on failure; callers handle errors.
 // model: optional model ID to override CLAUDE_MODEL env var for this session.
+// Precedence: explicit model arg > "model" field on the worker's config entry > CLAUDE_MODEL env.
 function spawnWatchdogProc(def, { model } = {}) {
+  model = model || def.model;
   assertSafeWorkerName(def.name);
   mkdirSync(WORKERS_LOG_DIR, { recursive: true });
   const outFd = openSync(`${WORKERS_LOG_DIR}/${def.name}.out.log`, "a");
@@ -384,6 +386,7 @@ function tmuxPanePid(winName) {
 }
 
 function spawnWatchdogTmux(def, { model } = {}) {
+  model = model || def.model;
   assertSafeWorkerName(def.name);
   // Ensure target session exists
   const hasSession = spawnSync(TMUX_BIN, ["has-session", "-t", WORKERS_TMUX_SESSION], { encoding: "utf8" });
@@ -1014,7 +1017,7 @@ function buildServer() {
           ? `running  pid=${entry.pid}  uptime=${Math.floor((Date.now() - entry.startedAt) / 1000)}s`
           : "stopped";
       }
-      return `${w.name}\t${state}`;
+      return `${w.name}\t${state}${w.model ? `\tmodel=${w.model}` : ""}`;
     });
     return { content: [{ type: "text", text: lines.join("\n") }] };
   });
@@ -1025,7 +1028,7 @@ function buildServer() {
     description: "Start the watchdog process for a named worker. The worker must be defined in the worker config (WORKERS_CONFIG). Returns the PID on success. No-ops (returns current PID) if already running. Pass model to override the default CLAUDE_MODEL for this session (e.g. 'claude-opus-4-7' for demanding tasks).",
     inputSchema: {
       name:  z.string().min(1).describe("Worker name as defined in WORKERS_CONFIG, e.g. 'backend', 'platform-orch'."),
-      model: z.string().min(1).optional().describe("Claude model ID to use for this session, e.g. 'claude-opus-4-7'. Overrides CLAUDE_MODEL env var. Omit to use the default (claude-haiku-4-5-20251001)."),
+      model: z.string().min(1).optional().describe("Claude model ID to use for this session, e.g. 'claude-opus-4-7'. Overrides the worker's configured model and the CLAUDE_MODEL env var. Omit to use the worker's \"model\" field from WORKERS_CONFIG, falling back to CLAUDE_MODEL (default claude-haiku-4-5-20251001)."),
     },
   }, async ({ name, model }) => {
     if (!WATCHDOG_BIN)
@@ -1461,6 +1464,7 @@ app.get("/workers", auth, (_req, res) => {
     name:      w.name,
     ns:        w.ns   || null,
     args:      w.args || [],
+    model:     w.model || null,
     running:   watchdogProcs.has(w.name),
     pid:       watchdogProcs.get(w.name)?.pid    ?? null,
     startedAt: watchdogProcs.get(w.name)?.startedAt ?? null,
