@@ -1,6 +1,6 @@
 {
   "name": "@anisthesia/claude-broker",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "A tiny MCP HTTP server that lets multiple Claude Code (or any MCP client) sessions exchange messages over named channels — the coordination backbone for multi-agent workflows.",
   "type": "module",
   "license": "MIT",

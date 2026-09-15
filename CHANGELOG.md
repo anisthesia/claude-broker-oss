@@ -5,6 +5,10 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.2.1] — 2026-09-16
+
 ### Fixed
 - **Headless workers now always reach the broker that started them.** `watchdog.sh` launches every
   session with `--mcp-config <mode-600 temp file>` naming one `broker` server at `BROKER_URL/mcp`

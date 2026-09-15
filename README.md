@@ -56,7 +56,7 @@ npm start
 You should see:
 
 ```
-[claude-broker] v2.2.0 listening on :8080  auth:on  prune:48h  exempt:[]
+[claude-broker] v2.2.1 listening on :8080  auth:on  prune:48h  exempt:[]
 [claude-broker] dashboard: http://localhost:8080/dashboard
 ```
 
