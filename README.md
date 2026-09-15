@@ -21,12 +21,29 @@ schema-validated protocols, and a live dashboard.
 - **Node.js ≥ 20** (uses the native `better-sqlite3` addon — a C toolchain is needed at install
   time; macOS ships one with Xcode CLT, most Linux distros need `build-essential`/`python3`).
 
-## Quick start
+## Install
+
+From npm (the package is published as `@anisthesia/claude-broker`; the CLI is `claude-broker`):
+
+```bash
+npm install -g @anisthesia/claude-broker
+claude-broker            # reads .env / env vars from the current directory
+# or, without installing:
+npx @anisthesia/claude-broker
+```
+
+Or from source:
 
 ```bash
 git clone https://github.com/anisthesia/claude-broker-oss.git
-cd claude-broker
+cd claude-broker-oss
 npm install
+```
+
+## Quick start
+
+```bash
+# (from a source checkout — see Install above)
 
 # Configure — the wizard writes .env + workers.json and generates a secret.
 # Point --project at the repo you want to coordinate (or omit for a bare setup).
@@ -39,7 +56,7 @@ npm start
 You should see:
 
 ```
-[claude-broker] v2.1.0 listening on :8080  auth:on  prune:48h  exempt:[]
+[claude-broker] v2.2.0 listening on :8080  auth:on  prune:48h  exempt:[]
 [claude-broker] dashboard: http://localhost:8080/dashboard
 ```
 

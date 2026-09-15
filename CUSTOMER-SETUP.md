@@ -20,8 +20,8 @@ exposure, no reverse proxy. (For a team spread across machines, see
    customer's `git clone` works.
 3. **Grant the customer read access** to the repo (Settings → Collaborators).
 
-> No GitHub? Run `npm pack` to produce `claude-broker-2.1.0.tgz` and send them the file; they
-> install it with `npm install ./claude-broker-2.1.0.tgz`.
+> No GitHub? Run `npm pack` to produce `anisthesia-claude-broker-2.2.0.tgz` and send them the file; they
+> install it with `npm install ./anisthesia-claude-broker-2.2.0.tgz`.
 
 ---
 

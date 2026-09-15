@@ -5,6 +5,10 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.2.0] — 2026-09-15
+
 ### Added
 - **`test-heartbeat-pipeline.js`** — regression guard for the 2026-07-08 heartbeat-pipeline repair:
   `watchdog.sh` must derive namespace-root sibling channels from multi-hyphen inbox names
@@ -39,6 +43,8 @@ All notable changes to this project are documented here. This project adheres to
   `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
 
 ### Changed
+- **Published as `@anisthesia/claude-broker`.** The unscoped `claude-broker` name on npm belongs to an
+  unrelated project. The CLI/bin name stays `claude-broker`.
 - **Telemetry envelope v1.1: `exit_code` lives in `activity`.** Every `schemas/*-telemetry.json`
   drops the top-level `exit_code` property (so `additionalProperties: false` rejects it) and declares
   `activity.exit_code` instead, with `activity.additionalProperties: false`. This matches what
@@ -55,6 +61,8 @@ All notable changes to this project are documented here. This project adheres to
   fleet configs and role files stay in the repository but are not published.
 
 ### Fixed
+- **`npx claude-broker` works.** `server.js` (the `bin` entry) was missing its `#!/usr/bin/env node`
+  shebang, so the installed bin could not execute.
 - **Branch-safety ritual never discards unpushed commits.** The core and protocol-qa role files
   used `git checkout -B worker/<name> origin/main` as a fallback, which once orphaned four unpushed
   commits. The ritual now refuses to reset a branch whose `origin/…..worker/<name>` log is non-empty:
