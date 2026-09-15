@@ -82,7 +82,7 @@ Schemas are stored in SQLite and hot-reloaded — no restart needed.
 
 | Tool | Purpose |
 |---|---|
-| `sprint_summary` | Roll up dispatched/completed/failed/pending task counts for a status channel. |
+| `sprint_summary` | Roll up dispatched/completed/failed/pending task counts for a status channel. Counts distinct `task_id`s; a task is judged by its latest result, so a retry that passes after a FAIL is one completed task. For `<ns>-status` the dispatched count covers `<ns>-*` inbox channels; for a bare `status` it covers every channel. |
 | `sprint_file_conflicts` | Detect workers touching overlapping files (from result metadata). |
 | `open_questions` | List `type: question` messages under a namespace prefix that have no later reply on the asker's inbox and no self-posted result — surfaces blocked workers at orchestrator turn-start. |
 
@@ -107,12 +107,12 @@ Active only when `WORKERS_CONFIG` / `WATCHDOG_BIN` are set. See
 |---|---|---|
 | `GET /health` | none | Liveness probe: `{ ok, ts, uptime_s }`. |
 | `GET /metrics` | bearer | In-memory counters since start: messages inserted, DB rows, long-poll totals, per-tool call/error/latency stats, per-route hit counts. |
-| `POST /mcp` | bearer | The MCP transport endpoint. |
+| `POST /mcp` | bearer | The MCP transport endpoint (stateless Streamable HTTP). `GET`/`DELETE /mcp` return a JSON-RPC-shaped 405. |
 | `GET /inbox?channel=&since_id=[&wait_ms=]` | bearer | Lightweight pre-check: `{ pending, count, max_id }`. With `wait_ms` (max 60000) it long-polls and returns as soon as a message lands. |
 | `POST /inbox/batch` | bearer | Same, for many channels in one body `{ "channel": since_id, ... }`. |
 | `POST /messages` | bearer | Post a message over plain REST (body `{ channel, sender, content }`). |
-| `GET /cost` | bearer or `?token=` | Aggregated session-cost rollup from `TELEMETRY_CHANNEL`. |
-| `GET /rate-limits` | bearer or `?token=` | Rate-limit event log from `RATE_LIMIT_CHANNEL`. |
+| `GET /cost` | bearer or `?token=` | Aggregated session-cost rollup from `TELEMETRY_CHANNEL` and every `*-telemetry` channel. |
+| `GET /rate-limits` | bearer or `?token=` | Rate-limit event log from `RATE_LIMIT_CHANNEL` and every `*-rate-limits` channel. |
 | `GET /workers` | bearer | Configured workers + running state (JSON). |
 | `POST /workers/:name/start` | bearer | Start a worker. |
 | `POST /workers/:name/stop` | bearer | Stop a worker. |

@@ -66,6 +66,8 @@ fi
 NAMESPACE="${INBOX_CHANNEL%%-*}"
 [[ -z "$PATROL_WATCH_CHANNEL" ]] && PATROL_WATCH_CHANNEL="${NAMESPACE}-status"
 TELEMETRY_CHANNEL="${NAMESPACE}-telemetry"
+STATUS_CHANNEL="${NAMESPACE}-status"
+RATE_LIMIT_CHANNEL="${NAMESPACE}-rate-limits"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -84,6 +86,15 @@ fi
 CLAUDE="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 BROKER_URL="${BROKER_URL:-http://localhost:8080}"
 BROKER_SECRET="${BROKER_SECRET:-}"
+
+# The bearer token travels in a curl config file (mode 600), never on curl's argv where any
+# local user could read it from `ps`.
+_CURL_CFG=""
+if [[ -n "$BROKER_SECRET" ]]; then
+  _CURL_CFG=$(mktemp /tmp/watchdog-curl-XXXXXX); chmod 600 "$_CURL_CFG"
+  printf 'header = "Authorization: Bearer %s"\n' "$BROKER_SECRET" > "$_CURL_CFG"
+fi
+_curl() { if [[ -n "$_CURL_CFG" ]]; then curl -K "$_CURL_CFG" "$@"; else curl "$@"; fi; }
 
 if [[ ! -d "$WORKER_DIR" ]]; then
   echo "[watchdog:$WORKER] ERROR: directory not found: $WORKER_DIR"
@@ -133,12 +144,9 @@ json_encode() {  # JSON-string-encode stdin
 
 # ── Broker checks (authenticated — /inbox requires the bearer token) ───────────
 
-_auth_hdr() { [[ -n "${BROKER_SECRET:-}" ]] && printf '%s\n%s' "-H" "Authorization: Bearer ${BROKER_SECRET}"; }
-
 check_channel() {
   local channel="$1" since_id="$2"
-  local hdr=(); [[ -n "${BROKER_SECRET:-}" ]] && hdr=(-H "Authorization: Bearer ${BROKER_SECRET}")
-  curl -sf --max-time 5 "${hdr[@]}" "${BROKER_URL}/inbox?channel=${channel}&since_id=${since_id}" 2>/dev/null || echo ""
+  _curl -sf --max-time 5 "${BROKER_URL}/inbox?channel=${channel}&since_id=${since_id}" 2>/dev/null || echo ""
 }
 check_inbox() { check_channel "$INBOX_CHANNEL" "$1"; }
 
@@ -153,9 +161,19 @@ emit_heartbeat() {
     hb=$(printf '{"type":"heartbeat","from":"%s","ts":"%s","model":"%s","context":{"size_tokens":0,"tier_threshold_pct":0,"rotation_recommended":false},"activity":{"state":"%s"}}' \
       "$REGISTRY_NAME" "$ts" "${CLAUDE_MODEL:-claude-haiku-4-5-20251001}" "$state")
   fi
-  local hdr=(); [[ -n "${BROKER_SECRET:-}" ]] && hdr=(-H "Authorization: Bearer ${BROKER_SECRET}")
-  curl -sf -X POST "${BROKER_URL}/messages" "${hdr[@]}" -H "Content-Type: application/json" \
+  _curl -sf -X POST "${BROKER_URL}/messages" -H "Content-Type: application/json" \
     -d "{\"channel\":\"${TELEMETRY_CHANNEL}\",\"sender\":\"${REGISTRY_NAME}\",\"content\":$(printf '%s' "$hb" | json_encode)}" \
+    >/dev/null 2>&1 || true
+}
+
+# Rate-limit event for the broker's /rate-limits view and dashboard panel.
+emit_rate_limit() {  # $1 = backoff seconds
+  local ts ev
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  ev=$(printf '{"type":"rate-limit","from":"%s","ts":"%s","model":"%s","backoff_s":%s,"start_reason":"%s","restart_count":%s}' \
+    "$REGISTRY_NAME" "$ts" "${CLAUDE_MODEL:-claude-haiku-4-5-20251001}" "$1" "${START_REASON:-unknown}" "$RESTART_COUNT")
+  _curl -sf -X POST "${BROKER_URL}/messages" -H "Content-Type: application/json" \
+    -d "{\"channel\":\"${RATE_LIMIT_CHANNEL}\",\"sender\":\"${REGISTRY_NAME}\",\"content\":$(printf '%s' "$ev" | json_encode)}" \
     >/dev/null 2>&1 || true
 }
 
@@ -196,7 +214,7 @@ _acquire_slot() {
 }
 _release_slot() { [[ -n "$_SLOT_FILE" ]] && rm -f "$_SLOT_FILE"; _SLOT_FILE=""; }
 
-trap 'rm -f "$LOCK_FILE"; _release_slot; echo "[watchdog:$WORKER] stopping"; exit 0' INT TERM
+trap 'rm -f "$LOCK_FILE" "$_CURL_CFG"; _release_slot; echo "[watchdog:$WORKER] stopping"; exit 0' INT TERM
 
 _JITTER=$(( RANDOM % 20 )); [[ $_JITTER -gt 0 ]] && sleep "$_JITTER"
 
@@ -204,6 +222,7 @@ echo "[watchdog:$WORKER] starting — dir: $WORKER_DIR  inbox: $INBOX_CHANNEL  m
 [[ -n "$PATROL_INTERVAL" ]] && echo "[watchdog:$WORKER] patrol every ${PATROL_INTERVAL}s (watch: $PATROL_WATCH_CHANNEL)"
 
 RESTART_COUNT=0; RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT
+NO_OUTPUT_RUNS=0; NO_OUTPUT_MAX=3
 LAST_PATROL_START=0; PATROL_JSON=""
 
 while true; do
@@ -226,6 +245,8 @@ while true; do
   fi
 
   MAX_ID=$(json_max_id "$INBOX_JSON")
+  # Remember where the status channel stood, so a clean exit can be checked for actual output.
+  STATUS_BASE=$(json_max_id "$(check_channel "$STATUS_CHANNEL" 0)")
   echo "[watchdog:$WORKER] --- restart #$RESTART_COUNT [reason: $START_REASON, inbox_max_id: $MAX_ID] ---"
   RESTART_COUNT=$((RESTART_COUNT + 1))
   [[ "$START_REASON" == "patrol" ]] && LAST_PATROL_START=$NOW
@@ -260,15 +281,33 @@ while true; do
   rm -f "$TMPOUT"
 
   if [[ $EXIT_CODE -eq 0 ]]; then
-    [[ "$MAX_ID" -gt "$CURSOR" ]] && write_cursor "$MAX_ID"
-    if [[ -n "$PATROL_INTERVAL" ]]; then
-      PL=$(json_max_id "$PATROL_JSON"); [[ "$PL" -gt "0" ]] && write_patrol_cursor "$PL"
+    # A clean exit alone does not prove the session handled its inbox — a session that decides
+    # "nothing to do" also exits 0. For inbox-triggered runs, advance the cursor only if the
+    # session posted something to the status channel; otherwise keep it and retry, giving up
+    # after NO_OUTPUT_MAX silent runs so one bad message cannot pin the worker in a loop.
+    if [[ "$START_REASON" != "inbox" ]] || json_pending "$(check_channel "$STATUS_CHANNEL" "$STATUS_BASE")"; then
+      [[ "$MAX_ID" -gt "$CURSOR" ]] && write_cursor "$MAX_ID"
+      NO_OUTPUT_RUNS=0
+      if [[ -n "$PATROL_INTERVAL" ]]; then
+        PL=$(json_max_id "$PATROL_JSON"); [[ "$PL" -gt "0" ]] && write_patrol_cursor "$PL"
+      fi
+      echo "[watchdog:$WORKER] clean exit — cursor=$MAX_ID, restarting in ${DELAY_NORMAL}s"
+      RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_NORMAL
+    else
+      NO_OUTPUT_RUNS=$((NO_OUTPUT_RUNS + 1))
+      if [[ $NO_OUTPUT_RUNS -ge $NO_OUTPUT_MAX ]]; then
+        echo "[watchdog:$WORKER] WARN: $NO_OUTPUT_RUNS clean exits with nothing posted to $STATUS_CHANNEL — advancing cursor to $MAX_ID anyway"
+        [[ "$MAX_ID" -gt "$CURSOR" ]] && write_cursor "$MAX_ID"
+        NO_OUTPUT_RUNS=0
+      else
+        echo "[watchdog:$WORKER] clean exit but nothing posted to $STATUS_CHANNEL — cursor unchanged (attempt $NO_OUTPUT_RUNS/$NO_OUTPUT_MAX), retrying in ${DELAY_CRASH}s"
+      fi
+      RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_CRASH
     fi
-    echo "[watchdog:$WORKER] clean exit — cursor=$MAX_ID, restarting in ${DELAY_NORMAL}s"
-    RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_NORMAL
   elif [[ "$RATE_LIMITED" == "true" ]]; then
     JIT=$(( RANDOM % 16 )); WAIT=$(( RATE_LIMIT_BACKOFF + JIT ))
     echo "[watchdog:$WORKER] RATE LIMITED — backing off ${WAIT}s"
+    emit_rate_limit "$WAIT"
     sleep $WAIT
     RATE_LIMIT_BACKOFF=$(( RATE_LIMIT_BACKOFF * 2 )); [[ $RATE_LIMIT_BACKOFF -gt $RATE_LIMIT_MAX ]] && RATE_LIMIT_BACKOFF=$RATE_LIMIT_MAX
   elif [[ $EXIT_CODE -eq 124 ]]; then

@@ -54,6 +54,9 @@ defends the spawn path:
 - All spawn **arguments and the binary path are single-quoted** before they reach a shell, so
   metacharacters in a worker config or `register_worker` input cannot inject commands.
 - `WATCHDOG_BIN` is operator-configured, never client-supplied.
+- The bearer secret stays **off command lines**: tmux workers receive it through `new-window -e`
+  (not the pane start command), and the bundled `watchdog.sh` sends it to the broker via a
+  mode-600 curl config file (`-K`) rather than an `-H` argument visible in `ps`.
 
 Residual risk: a token holder can still start/stop the workers you *have* defined and register new
 ones that run your `WATCHDOG_BIN`. Keep the token trusted and the watchdog script minimal.

@@ -28,6 +28,25 @@ All notable changes to this project are documented here. This project adheres to
   `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
 
 ### Fixed
+- **Watchdogs survive a broker restart without becoming orphans.** Subprocess spawns write
+  `WORKERS_LOG_DIR/<name>.pid`; at startup the broker re-adopts live pids that still run
+  `WATCHDOG_BIN`, so `list_workers`/`stop_worker` work and `start_worker` cannot double-start.
+- **Secrets are off command lines.** tmux workers get credentials via `new-window -e` (tmux ≥ 3.2;
+  older versions fall back with a warning) and `watchdog.sh` sends the bearer token through a
+  mode-600 curl config file instead of an `-H` argument visible in `ps`.
+- **`watchdog.sh` no longer discards tasks on a silent clean exit.** For inbox-triggered runs the
+  cursor advances only if the session posted to `<ns>-status`; silent runs are retried and the
+  cursor moves on after three of them with a warning.
+- **`watchdog.sh` posts `type: rate-limit` events** to `<ns>-rate-limits`, so `/rate-limits` and
+  the dashboard panel show real data.
+- **`sprint_summary` counts distinct tasks and judges each by its latest result**; re-posted or
+  retried results no longer inflate "completed" or push "pending" negative. A bare `status` channel
+  scopes dispatches across all channels instead of a nonsensical `status-%` pattern, and LIKE
+  wildcards in namespace names are escaped.
+- Dashboard cost / context-fill / model columns fall back to the sender's latest cost-bearing
+  heartbeat when the newest row is a cost-less watchdog ping.
+- `GET`/`DELETE /mcp` return a JSON-RPC-shaped 405 instead of an HTML 404. Removed the dead
+  `test-client.js`.
 - **Generated worker roles called a `turn_start` signature that does not exist** (`telemetry_channel`,
   `worker`). Roles now call `turn_start(inbox_channel, control_channel, …)` and post their heartbeat
   with `upsert_heartbeat` using an envelope that matches `schemas/telemetry.json`.

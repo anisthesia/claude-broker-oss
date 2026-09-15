@@ -8,7 +8,8 @@ import { z } from "zod";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { spawn, spawnSync } from "child_process";
-import { readFileSync, writeFileSync, renameSync, mkdirSync, createWriteStream, openSync, closeSync, accessSync, constants as fsConstants } from "fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, createWriteStream, openSync, closeSync, accessSync, readdirSync, statSync, unlinkSync, constants as fsConstants } from "fs";
+import { basename } from "path";
 import { timingSafeEqual } from "crypto";
 
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
@@ -102,6 +103,33 @@ if (WORKERS_CONFIG) {
 // name → { pid, proc, startedAt }
 // Spawned watchdog processes are detached (own process group) so killing -pid kills the full tree.
 const watchdogProcs = new Map();
+
+const pidFilePath = (name) => `${WORKERS_LOG_DIR}/${name}.pid`;
+function isAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } }
+// Detached watchdogs outlive a broker restart. Each subprocess spawn records its pid in
+// WORKERS_LOG_DIR; at startup every pidfile whose process is still alive *and* still runs the
+// watchdog binary is re-adopted, so list_workers/stop_worker keep working and start_worker
+// cannot launch a duplicate next to the survivor. Stale pidfiles are removed.
+function adoptOrphanWatchdogs() {
+  if (!WATCHDOG_BIN || WORKERS_TMUX_SESSION) return;
+  let files = [];
+  try { files = readdirSync(WORKERS_LOG_DIR).filter(f => f.endsWith(".pid")); } catch { return; }
+  for (const f of files) {
+    const name = f.slice(0, -4);
+    const p = `${WORKERS_LOG_DIR}/${f}`;
+    let pid = NaN; try { pid = parseInt(readFileSync(p, "utf8"), 10); } catch {}
+    const cmd = Number.isInteger(pid) && pid > 1 && isAlive(pid)
+      ? (spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).stdout || "")
+      : "";
+    if (cmd.includes(basename(WATCHDOG_BIN))) {
+      let startedAt = Date.now(); try { startedAt = statSync(p).mtimeMs; } catch {}
+      watchdogProcs.set(name, { pid, startedAt, adopted: true });
+      console.log(`[claude-broker] adopted running watchdog "${name}" (pid ${pid}) from ${p}`);
+    } else {
+      try { unlinkSync(p); } catch {}
+    }
+  }
+}
 
 const startedAt = Date.now();
 
@@ -249,6 +277,17 @@ const stmtLatestPerSender = db.prepare(`
   ORDER BY m.sender
 `);
 
+// Latest row per sender that carries a cost figure — the newest heartbeat is often a cost-less
+// watchdog "working" ping, so the dashboard's cost/context columns fall back to this one.
+const stmtLatestCostPerSender = db.prepare(`
+  SELECT m.sender, m.content FROM messages m
+  INNER JOIN (
+    SELECT sender, MAX(id) AS max_id FROM messages
+    WHERE channel = ? AND json_valid(content) AND json_extract(content, '$.cost_since_start.estimated_usd') IS NOT NULL
+    GROUP BY sender
+  ) latest ON m.id = latest.max_id
+`);
+
 const stmtLatestMsgPerChannel = db.prepare(`
   SELECT m.channel, m.sender, m.content, m.created_at
   FROM messages m
@@ -269,12 +308,18 @@ const stmtSprintInfo = db.prepare(`
 
 // Sprint progress: result/failed counts from the status channel.
 // Dispatched count comes from stmtSprintDispatched (inbox channels) — tasks never appear on the status channel.
+// One row per task_id, judged by its LATEST result: a retry that passes after a FAIL counts as
+// completed, not as one completed and one failed; re-posted results never inflate "completed".
 const stmtSprintProgress = db.prepare(`
-  SELECT
-    COUNT(CASE WHEN json_valid(content) AND json_extract(content, '$.type') = 'result' THEN 1 END) AS completed,
-    COUNT(CASE WHEN json_valid(content) AND json_extract(content, '$.type') = 'result'
-               AND json_extract(content, '$.summary') LIKE 'FAIL%' THEN 1 END) AS failed
-  FROM messages WHERE channel = ?
+  WITH latest AS (
+    SELECT json_extract(content, '$.task_id') AS task_id, MAX(id) AS max_id
+    FROM messages
+    WHERE channel = ? AND json_valid(content) AND json_extract(content, '$.type') = 'result'
+    GROUP BY task_id
+  )
+  SELECT COUNT(*) AS completed,
+         COALESCE(SUM(CASE WHEN json_extract(m.content, '$.summary') LIKE 'FAIL%' THEN 1 ELSE 0 END), 0) AS failed
+  FROM latest l JOIN messages m ON m.id = l.max_id
 `);
 
 const stmtHasMessages = db.prepare(
@@ -315,20 +360,29 @@ const stmtReadLast = db.prepare(
 // Count type:task messages dispatched into worker inboxes for a namespace (derived from status channel).
 // Excludes meta-channels (status, control, telemetry, backlog, sprint-retrospective).
 const stmtSprintDispatched = db.prepare(`
-  SELECT COUNT(*) AS n FROM messages
-  WHERE channel LIKE ?
+  SELECT COUNT(DISTINCT json_extract(content, '$.task_id')) AS n FROM messages
+  WHERE channel LIKE ? ESCAPE '\\'
     AND channel NOT LIKE '%-status' AND channel NOT LIKE '%-control'
     AND channel NOT LIKE '%-telemetry' AND channel NOT LIKE '%-backlog'
     AND channel NOT LIKE '%-sprint-retrospective'
     AND json_valid(content) AND json_extract(content, '$.type') = 'task'
 `);
+// LIKE pattern for the worker-inbox channels a status channel governs: "<ns>-%" for a
+// namespaced channel, every channel for a bare "status". LIKE wildcards in the name are escaped.
+function escLike(s) { return String(s).replace(/[\\%_]/g, m => "\\" + m); }
+function sprintScopePattern(statusChannel) {
+  if (!statusChannel.includes("-")) return "%";
+  return `${escLike(statusChannel.slice(0, statusChannel.lastIndexOf("-")))}-%`;
+}
 
 // Module-level prepared statements for /cost, /rate-limits, and dashboard (avoids inline prepare on each request).
+// The REST rollups read the configured channel plus every namespaced sibling (<ns>-telemetry,
+// <ns>-rate-limits), matching the dashboard's "all" view, so a multi-project broker is covered.
 const stmtCostEndpointRows = db.prepare(
-  `SELECT sender, content, created_at FROM messages WHERE channel = ? AND created_at >= ? ORDER BY id ASC`
+  `SELECT sender, content, created_at FROM messages WHERE (channel = ? OR channel LIKE '%-telemetry') AND created_at >= ? ORDER BY id ASC`
 );
 const stmtRlEndpointRows = db.prepare(
-  `SELECT sender, content, created_at FROM messages WHERE channel = ? AND created_at >= ? ORDER BY id ASC`
+  `SELECT sender, content, created_at FROM messages WHERE (channel = ? OR channel LIKE '%-rate-limits') AND created_at >= ? ORDER BY id ASC`
 );
 const stmtDashCostRows = db.prepare(
   `SELECT sender, content FROM messages WHERE (channel = ? OR channel LIKE '%-telemetry') AND created_at >= ? ORDER BY id ASC`
@@ -445,13 +499,24 @@ function spawnWatchdogProc(def, { model } = {}) {
   proc.on("exit", (code) => {
     console.log(`[claude-broker] watchdog "${def.name}" exited (code ${code ?? "?"})`);
     watchdogProcs.delete(def.name);
+    try { unlinkSync(pidFilePath(def.name)); } catch {}
   });
   watchdogProcs.set(def.name, { pid: proc.pid, proc, startedAt: Date.now() });
+  try { writeFileSync(pidFilePath(def.name), `${proc.pid}\n`, "utf8"); } catch (e) { console.warn(`[claude-broker] could not write pidfile for "${def.name}": ${e.message}`); }
   console.log(`[claude-broker] started watchdog "${def.name}" (pid ${proc.pid}) → logs: ${WORKERS_LOG_DIR}/${def.name}.{out,err}.log`);
   return proc;
 }
 
 // ── tmux helpers (used only when WORKERS_TMUX_SESSION is set) ────────────────
+
+let _tmuxEnvFlag = null;
+function tmuxSupportsEnvFlag() {
+  if (_tmuxEnvFlag !== null) return _tmuxEnvFlag;
+  const out = (spawnSync(TMUX_BIN, ["-V"], { encoding: "utf8" }).stdout || "").trim(); // "tmux 3.6b"
+  const m = out.match(/(\d+)\.(\d+)/);
+  _tmuxEnvFlag = !!m && (Number(m[1]) > 3 || (Number(m[1]) === 3 && Number(m[2]) >= 2));
+  return _tmuxEnvFlag;
+}
 
 function tmuxWindowExists(winName) {
   try {
@@ -478,17 +543,28 @@ function spawnWatchdogTmux(def, { model } = {}) {
   }
   const envParts = [
     ["BROKER_SECRET", SHARED_SECRET],
-    ["BROKER_URL",    process.env.BROKER_URL],
+    ["BROKER_URL",    process.env.BROKER_URL || `http://localhost:${PORT}`],
     ["CLAUDE_BIN",    process.env.CLAUDE_BIN],
     ["CLAUDE_MODEL",  model || process.env.CLAUDE_MODEL],
   ].filter(([, v]) => v);
   const shellQ = v => "'" + String(v).replace(/'/g, "'\\''") + "'";
-  const envPrefix = envParts.map(([k, v]) => `${k}=${shellQ(v)}`).join(" ") + (envParts.length ? " " : "");
   const args = expandArgs(def.args || []);
   // Single-quote every arg (and the binary path) so shell metacharacters in worker
   // config / register_worker input can never break out of the tmux new-window command.
-  const shellCmd = `${envPrefix}${shellQ(WATCHDOG_BIN)} ${args.map(shellQ).join(" ")}`;
-  const r = spawnSync(TMUX_BIN, ["new-window", "-t", WORKERS_TMUX_SESSION, "-n", def.name, shellCmd], { encoding: "utf8" });
+  const shellCmd = `${shellQ(WATCHDOG_BIN)} ${args.map(shellQ).join(" ")}`;
+  // Credentials go through tmux's per-window environment (-e, tmux >= 3.2) rather than a
+  // KEY=VALUE prefix on the shell command, which would leave the secret in the pane's start
+  // command (`tmux list-windows -F '#{pane_start_command}'`). Older tmux falls back to the
+  // prefix with a warning.
+  let tmuxArgs;
+  if (tmuxSupportsEnvFlag()) {
+    tmuxArgs = ["new-window", "-t", WORKERS_TMUX_SESSION, "-n", def.name, ...envParts.flatMap(([k, v]) => ["-e", `${k}=${v}`]), shellCmd];
+  } else {
+    console.warn(`[claude-broker] tmux < 3.2: passing worker credentials on the command line (visible in the pane start command). Upgrade tmux to avoid this.`);
+    const envPrefix = envParts.map(([k, v]) => `${k}=${shellQ(v)}`).join(" ") + (envParts.length ? " " : "");
+    tmuxArgs = ["new-window", "-t", WORKERS_TMUX_SESSION, "-n", def.name, `${envPrefix}${shellCmd}`];
+  }
+  const r = spawnSync(TMUX_BIN, tmuxArgs, { encoding: "utf8" });
   if (r.status !== 0) throw new Error((r.stderr || "").trim() || "tmux new-window failed");
   const pid = tmuxPanePid(def.name);
   watchdogProcs.set(def.name, { pid, startedAt: Date.now(), tmux: true });
@@ -513,7 +589,14 @@ function workerRunningInfo(name) {
     return { pid: tmuxPanePid(name), startedAt: entry?.startedAt ?? null, tmux: true };
   }
   const entry = watchdogProcs.get(name);
-  return entry ? { pid: entry.pid, startedAt: entry.startedAt, tmux: false } : null;
+  if (!entry) return null;
+  // Adopted entries have no ChildProcess handle, so there is no 'exit' event — poll instead.
+  if (entry.adopted && !isAlive(entry.pid)) {
+    watchdogProcs.delete(name);
+    try { unlinkSync(pidFilePath(name)); } catch {}
+    return null;
+  }
+  return { pid: entry.pid, startedAt: entry.startedAt, tmux: false };
 }
 
 // Returns { pid, tmux, already } — already=true means it was running and nothing was spawned.
@@ -557,6 +640,7 @@ function stopWorker(name) {
   } catch (e) {
     throw new WorkerError(500, `kill failed: ${e.message}`);
   }
+  try { unlinkSync(pidFilePath(name)); } catch {}
   console.log(`[claude-broker] stopped watchdog "${name}" (pid ${entry.pid})`);
   return { pid: entry.pid, tmux: false };
 }
@@ -1395,8 +1479,7 @@ function buildServer() {
   }, async ({ status_channel, control_channel }) => {
     const progress   = stmtSprintProgress.get(status_channel) || { completed: 0, failed: 0 };
     // Derive namespace prefix (e.g. "dv" from "status") to query worker inbox channels.
-    const ns         = status_channel.includes('-') ? status_channel.slice(0, status_channel.lastIndexOf('-')) : status_channel;
-    const dispatched = stmtSprintDispatched.get(`${ns}-%`).n;
+    const dispatched = stmtSprintDispatched.get(sprintScopePattern(status_channel)).n;
     let sprint = null;
     if (control_channel) {
       const row = stmtSprintInfo.get(control_channel);
@@ -1867,7 +1950,7 @@ app.get("/dashboard", dashboardAuth, (req, res) => {
     try { const p = JSON.parse(row.content); subject = p.subject || ""; body = typeof p.body === "string" ? p.body : ""; } catch {}
     const slug       = subject.split(/\s+/)[0] || subject;
     const progress   = stmtSprintProgress.get(statusChan) || { completed: 0, failed: 0 };
-    const dispatched = stmtSprintDispatched.get(`${ns}-%`).n;
+    const dispatched = stmtSprintDispatched.get(`${escLike(ns)}-%`).n;
     return { ns, slug, startedAt: row.created_at, body, dispatched, ...progress };
   }
 
@@ -1914,6 +1997,12 @@ app.get("/dashboard", dashboardAuth, (req, res) => {
           return stmtLatestPerSender.all(c).map(r => ({...r, _ns: ns}));
         });
       })();
+  const costByKey = new Map();
+  for (const c of new Set(telemetryRows.map(r => `${r._ns}-telemetry`))) {
+    for (const r of stmtLatestCostPerSender.all(c)) {
+      try { costByKey.set(`${nsOf(c)}:${r.sender}`, JSON.parse(r.content)); } catch {}
+    }
+  }
 
   // channel → message count, used for inbox-pending lookups
   const channelCountMap = new Map(allChannels.map(r => [r.channel, r.n]));
@@ -1925,10 +2014,11 @@ app.get("/dashboard", dashboardAuth, (req, res) => {
     const ageSec     = Math.floor((now - row.created_at) / 1000);
     const state      = hb.activity?.state || hb.state || "unknown";
     const task       = hb.activity?.current_task_id || null;
-    const cost       = hb.cost_since_start?.estimated_usd ?? null;
+    const fb         = costByKey.get(`${row._ns}:${row.sender}`) || {};
+    const cost       = hb.cost_since_start?.estimated_usd ?? fb.cost_since_start?.estimated_usd ?? null;
     const rotating   = hb.context?.rotation_recommended === true;
-    const tierPct    = hb.context?.tier_threshold_pct ?? null;
-    const model      = hb.model || null;
+    const tierPct    = hb.context?.tier_threshold_pct ?? fb.context?.tier_threshold_pct ?? null;
+    const model      = hb.model || fb.model || null;
     const inboxChan  = `${row._ns}-${row.sender}`;
     const inboxCount = channelCountMap.get(inboxChan) || 0;
 
@@ -2522,6 +2612,13 @@ if (SHARED_SECRET) {
   console.warn("[claude-broker] WARNING: SHARED_SECRET is not set — broker is UNAUTHENTICATED (BROKER_ALLOW_NO_AUTH=1). Do not expose to any untrusted network.");
 }
 
+// Stateless transport: there is no SSE stream to open (GET) or session to close (DELETE).
+// Answer with a JSON-RPC-shaped 405 instead of Express's HTML 404 so probing clients see why.
+const mcpMethodNotAllowed = (_req, res) => res.status(405).set("Allow", "POST")
+  .json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed: this broker runs the stateless Streamable HTTP transport — use POST /mcp" }, id: null });
+app.get("/mcp", mcpMethodNotAllowed);
+app.delete("/mcp", mcpMethodNotAllowed);
+
 app.post("/mcp", async (req, res) => {
   // Disable socket inactivity timeout so long-polling tools (wait_for_messages up to 300s)
   // don't get dropped mid-call by Node.js's default socket timeout.
@@ -2544,6 +2641,8 @@ const httpServer = app.listen(PORT, () => {
 });
 // Disable server-level request timeout: long-poll tools can legitimately take up to 300s.
 httpServer.requestTimeout = 0;
+
+adoptOrphanWatchdogs();
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────
 // Close the listener, checkpoint the WAL, and close the DB so no data is lost and

@@ -136,8 +136,11 @@ the bundled watchdog and writes `workers.json`).
 spawns `WATCHDOG_BIN` with that entry's `args`. The broker ships a ready-to-use supervisor,
 **`watchdog.sh`** (on-demand mode): it polls the worker's inbox and launches a Claude Code session
 *only when there is pending work* (or a patrol interval elapses); the session drains its inbox and
-exits; the watchdog restarts it when new work arrives. It handles rate-limit backoff, a
-max-session ceiling, a global concurrency cap, and liveness heartbeats. You can point `WATCHDOG_BIN`
+exits; the watchdog restarts it when new work arrives. It handles rate-limit backoff (and posts a
+`type: rate-limit` event to `<ns>-rate-limits` for the `/rate-limits` view), a max-session ceiling,
+a global concurrency cap, and liveness heartbeats. A clean exit only advances the inbox cursor when
+the session actually posted to `<ns>-status`; a silent session is retried, and after three silent
+runs the cursor moves on with a warning so one bad message cannot pin the worker. You can point `WATCHDOG_BIN`
 at your own script instead — the contract is just "a program that takes these args and runs a
 worker until killed."
 
@@ -146,8 +149,13 @@ Two spawn modes:
 - **Subprocess mode** (default): detached child; stdout/stderr go to
   `WORKERS_LOG_DIR/<name>.{out,err}.log`; stopped via SIGTERM to the process group. The broker
   injects `BROKER_URL` and `BROKER_SECRET` so the watchdog can reach the authenticated broker.
+  Each spawn also writes `WORKERS_LOG_DIR/<name>.pid`; on restart the broker re-adopts any pid
+  that is still alive and still runs `WATCHDOG_BIN`, so `list_workers`/`stop_worker` keep working
+  and `start_worker` never launches a duplicate next to a survivor.
 - **tmux mode** (`WORKERS_TMUX_SESSION` set): each worker runs in its own tmux window; the broker
-  injects `BROKER_SECRET`/`BROKER_URL`/`CLAUDE_*` env vars into the window.
+  injects `BROKER_SECRET`/`BROKER_URL`/`CLAUDE_*` into the window's environment via `tmux new-window -e`
+  (tmux ≥ 3.2), so the secret never appears in the pane's start command. Older tmux falls back to a
+  command-line prefix and logs a warning.
 
 **Role files.** Each worker session runs in its working directory and reads a `CLAUDE.md` there
 for its identity and protocol. Generate starter ones with `npm run setup -- --scaffold-roles`
