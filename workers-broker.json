@@ -174,49 +174,5 @@
       "--inbox-channel",
       "rp-orchestrator"
     ]
-  },
-  {
-    "name": "vp-backend",
-    "ns": "vp",
-    "args": [
-      "workers/backend",
-      "--repo-root",
-      "/Users/anis/myprojects/voice-platform",
-      "--inbox-channel",
-      "vp-backend"
-    ]
-  },
-  {
-    "name": "vp-frontend",
-    "ns": "vp",
-    "args": [
-      "workers/frontend",
-      "--repo-root",
-      "/Users/anis/myprojects/voice-platform",
-      "--inbox-channel",
-      "vp-frontend"
-    ]
-  },
-  {
-    "name": "vp-voice",
-    "ns": "vp",
-    "args": [
-      "workers/voice",
-      "--repo-root",
-      "/Users/anis/myprojects/voice-platform",
-      "--inbox-channel",
-      "vp-voice"
-    ]
-  },
-  {
-    "name": "vp-reviewer",
-    "ns": "vp",
-    "args": [
-      "workers/code-reviewer",
-      "--repo-root",
-      "/Users/anis/myprojects/voice-platform",
-      "--inbox-channel",
-      "vp-reviewer"
-    ]
   }
 ]

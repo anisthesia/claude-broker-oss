@@ -18,7 +18,7 @@
     "from": {
       "type": "string",
       "minLength": 1,
-      "description": "Worker identifier: backend, frontend, voice, reviewer, or vp-orchestrator."
+      "description": "Worker identifier: backend, frontend, voice, site, ops, reviewer, or voice-orchestrator."
     },
     "ts": {
       "type": "string",

@@ -512,5 +512,82 @@
       "--inbox-channel",
       "cb-reviewer"
     ]
+  },
+  {
+    "name": "voice-orch",
+    "ns": "voice",
+    "args": [
+      "orchestrators/voice-platform",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-orchestrator"
+    ]
+  },
+  {
+    "name": "voice-backend",
+    "ns": "voice",
+    "args": [
+      "workers/backend",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-backend"
+    ]
+  },
+  {
+    "name": "voice-frontend",
+    "ns": "voice",
+    "args": [
+      "workers/frontend",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-frontend"
+    ]
+  },
+  {
+    "name": "voice-voice",
+    "ns": "voice",
+    "args": [
+      "workers/voice",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-voice"
+    ]
+  },
+  {
+    "name": "voice-site",
+    "ns": "voice",
+    "args": [
+      "workers/site",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-site"
+    ]
+  },
+  {
+    "name": "voice-ops",
+    "ns": "voice",
+    "args": [
+      "workers/ops",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-ops"
+    ]
+  },
+  {
+    "name": "voice-reviewer",
+    "ns": "voice",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "voice-reviewer"
+    ]
   }
 ]

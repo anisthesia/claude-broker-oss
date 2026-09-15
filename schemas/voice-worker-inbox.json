@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "voice-platform worker-inbox envelope",
-  "description": "Messages dispatched into a voice-platform worker inbox (vp-backend, vp-frontend, vp-voice, vp-reviewer).",
+  "description": "Messages dispatched into a voice-platform worker inbox (voice-backend, voice-frontend, voice-voice, voice-site, voice-ops, voice-reviewer).",
   "version": "1.1",
   "type": "object",
   "required": [
@@ -29,8 +29,8 @@
     "task_id": {
       "type": "string",
       "minLength": 3,
-      "pattern": "^vp-[0-9]{4}-[0-9]{2}-[0-9]{2}(-[a-z0-9-]+)?$",
-      "description": "Format: vp-YYYY-MM-DD or vp-YYYY-MM-DD-<short-name>, e.g. vp-2026-07-25-add-auth."
+      "pattern": "^voice-[0-9]{4}-[0-9]{2}-[0-9]{2}(-[a-z0-9-]+)?$",
+      "description": "Format: voice-YYYY-MM-DD or voice-YYYY-MM-DD-<short-name>, e.g. voice-2026-07-25-add-auth."
     },
     "from": {
       "type": "string",
@@ -40,7 +40,7 @@
     "to": {
       "type": "string",
       "minLength": 1,
-      "description": "Target worker: backend, frontend, voice, reviewer, or * for broadcast."
+      "description": "Target worker: backend, frontend, voice, site, ops, reviewer, or * for broadcast."
     },
     "subject": {
       "type": "string",

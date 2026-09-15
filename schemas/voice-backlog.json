@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "voice-platform backlog envelope",
-  "description": "Persistent deferred tasks and sprint-retrospective entries for voice-platform (vp-backlog, vp-sprint-retrospective). These channels are never purged.",
+  "description": "Persistent deferred tasks and sprint-retrospective entries for voice-platform (voice-backlog, voice-sprint-retrospective). These channels are never purged.",
   "version": "1.0",
   "type": "object",
   "required": ["type", "task_id", "from", "subject"],
