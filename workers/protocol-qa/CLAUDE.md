@@ -44,6 +44,25 @@ An orchestrator session (infra-orchestrator) dispatches work to you via the
 
 At the start of every user turn, before doing anything else:
 
+0. **Branch safety — first action every session.** Never reset or recreate a branch that
+   holds commits origin does not have:
+   ```bash
+   git fetch origin
+   BASE=$(git rev-parse --verify -q origin/worker/protocol-qa || git rev-parse origin/main)
+   if git rev-parse --verify -q worker/protocol-qa >/dev/null && [ -n "$(git log --oneline "$BASE"..worker/protocol-qa)" ]; then
+     # worker/protocol-qa has unpushed commits — switch WITHOUT resetting, then publish them
+     git checkout worker/protocol-qa
+     git push -u origin worker/protocol-qa
+   else
+     git checkout -B worker/protocol-qa "$BASE"
+   fi
+   git branch --show-current   # must print "worker/protocol-qa"
+   ```
+   If the output is NOT `worker/protocol-qa`, or the push of unpushed commits fails: post
+   `type: question` to `cb-status` and **STOP** — do not read inbox or start any task.
+   Never use `git reset --hard`, `git checkout -B`, or `git branch -f` on a branch whose
+   `git log @{u}..` (or `origin/main..`) is non-empty.
+
 1. `read_messages(channel="cb-protocol-qa", since_id=<last>)` — your inbox.
    Default `since_id=0` on first read of a new session.
 2. `has_messages(channel="cb-control", since_id=<last_control_id>)`:

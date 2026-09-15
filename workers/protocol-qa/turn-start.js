@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const BROKER_URL = process.env.BROKER_URL || "http://localhost:8080/mcp";
-const SECRET = process.env.SHARED_SECRET || "";
+const SECRET = process.env.SHARED_SECRET || process.env.BROKER_SECRET || "";
 
 let lastQaId = 0;
 let lastControlId = 0;

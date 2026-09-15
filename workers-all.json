@@ -319,7 +319,7 @@
     "args": [
       "workers/core",
       "--repo-root",
-      "/Users/anis/myprojects/claude-broker-oss",
+      "/Users/anis/myprojects/claude-broker-oss-workers/core",
       "--inbox-channel",
       "cb-core"
     ]
@@ -330,7 +330,7 @@
     "args": [
       "workers/protocol-qa",
       "--repo-root",
-      "/Users/anis/myprojects/claude-broker-oss",
+      "/Users/anis/myprojects/claude-broker-oss-workers/protocol-qa",
       "--inbox-channel",
       "cb-protocol-qa"
     ]

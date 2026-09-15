@@ -6,6 +6,17 @@ All notable changes to this project are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **`test-heartbeat-pipeline.js`** — regression guard for the 2026-07-08 heartbeat-pipeline repair:
+  `watchdog.sh` must derive namespace-root sibling channels from multi-hyphen inbox names
+  (`cb-protocol-qa` → `cb-telemetry`, `dv-backend-services` → `dv-telemetry`), and the v1.1
+  telemetry schema must accept working / session-end beats with `exit_code` nested in `activity`
+  (via `send_message` and `upsert_heartbeat`) while rejecting a top-level `exit_code`.
+- **`watchdog.sh --print-channels`** prints the derived namespace, telemetry, status, rate-limits
+  and patrol-watch channels and exits — for tests and debugging.
+- `assess-dv-strict.js` takes channel names and/or `prefix-` arguments (any namespace), checks the
+  most recent rows via `read_last` (`ASSESS_LIMIT`, default 50) instead of the oldest 20, reports
+  named channels that have no rows yet, and counts non-JSON content as a violation (strict channels
+  reject it).
 - **`open_questions` tool** — lists `type: question` messages in a namespace that never got a reply on
   the asker's inbox (and no self-posted result), so blocked workers are visible at orchestrator turn-start.
 - **`projection: "summary"`** on `read_messages`, `read_last` and `turn_start` — returns headline
@@ -28,11 +39,28 @@ All notable changes to this project are documented here. This project adheres to
   `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
 
 ### Changed
+- **Telemetry envelope v1.1: `exit_code` lives in `activity`.** Every `schemas/*-telemetry.json`
+  drops the top-level `exit_code` property (so `additionalProperties: false` rejects it) and declares
+  `activity.exit_code` instead, with `activity.additionalProperties: false`. This matches what
+  `watchdog.sh` has emitted since the pipeline repair.
+- **15 warn-only channels promoted to strict** after the observation window (zero schema-warn lines):
+  `cb-status`, `sm-status`, `rp-status`, `rp-control`, `rp-api`, `rp-admin`, `rp-web`, `rp-android`,
+  `rp-ios`, `rp-qa`, `dx-control`, `dx-api`, `dx-web`, `dx-db`, `dx-qa`. The five dv channels stay
+  warn-only — live violations on `dv-control`, `dv-customer-portal`, `dv-qa`.
+- The cb `core` and `protocol-qa` workers run in their own git worktrees
+  (`../claude-broker-oss-workers/<name>` on `worker/<name>`), so concurrent tasks can no longer
+  commit onto whichever branch the shared checkout happens to have out.
 - The npm package ships only the generic protocol schemas (`schemas/{backlog,cluster-status,control,
   reviewer-inbox,status,telemetry,worker-inbox}.json`). Per-project schema sets, registration scripts,
   fleet configs and role files stay in the repository but are not published.
 
 ### Fixed
+- **Branch-safety ritual never discards unpushed commits.** The core and protocol-qa role files
+  used `git checkout -B worker/<name> origin/main` as a fallback, which once orphaned four unpushed
+  commits. The ritual now refuses to reset a branch whose `origin/…..worker/<name>` log is non-empty:
+  it switches without resetting, pushes, and stops with a `type: question` if the push fails.
+- `workers/*/turn-start.js` fall back to `BROKER_SECRET` (what the watchdog injects) when
+  `SHARED_SECRET` is not in the session environment.
 - **Watchdogs survive a broker restart without becoming orphans.** Subprocess spawns write
   `WORKERS_LOG_DIR/<name>.pid`; at startup the broker re-adopts live pids that still run
   `WATCHDOG_BIN`, so `list_workers`/`stop_worker` work and `start_worker` cannot double-start.

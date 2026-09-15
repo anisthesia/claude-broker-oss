@@ -91,8 +91,13 @@
             "coverage-patrol"
           ],
           "description": "working=active; idle-polling=in long-poll loop; blocked-on-question=awaiting answer; rotating=context rotation; idle-exit=exiting loop; session-end=watchdog-posted after exit; reviewing=CFO/observer reviewing; coverage-patrol=QA patrol"
+        },
+        "exit_code": {
+          "type": "integer",
+          "description": "Process exit code — present on state=session-end heartbeats posted by the watchdog. Lives inside activity; a top-level exit_code is rejected (additionalProperties: false)."
         }
-      }
+      },
+      "additionalProperties": false
     },
     "cost_since_start": {
       "type": "object",
@@ -118,10 +123,6 @@
           "minimum": 0
         }
       }
-    },
-    "exit_code": {
-      "type": "integer",
-      "description": "Process exit code — present on activity.state=session-end heartbeats posted by the watchdog."
     }
   },
   "additionalProperties": false

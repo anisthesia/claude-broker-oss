@@ -18,6 +18,8 @@
 #   --patrol-watch-channel <channel>  Channel checked for new content before a patrol fires
 #                                     (default: "<namespace>-status", derived from the inbox channel).
 #   --max-session-minutes <minutes>   Hard ceiling on a session's duration (default: 45).
+#   --print-channels                  Print the derived sibling channels (telemetry, status,
+#                                     rate-limits, patrol-watch) and exit — for tests and debugging.
 #
 # Environment:
 #   BROKER_URL      broker base URL (default http://localhost:8080) — injected by start_worker
@@ -44,6 +46,7 @@ PATROL_WATCH_CHANNEL=""      # default derived from the inbox namespace below
 REPO_ROOT_OVERRIDE=""
 WORK_DIR_OVERRIDE=""         # explicit session working dir (e.g. an isolated worktree)
 MAX_SESSION_MINUTES=""
+PRINT_CHANNELS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --repo-root)              REPO_ROOT_OVERRIDE="$2";     shift 2 ;;
     --work-dir)               WORK_DIR_OVERRIDE="$2";      shift 2 ;;
     --max-session-minutes)    MAX_SESSION_MINUTES="$2";    shift 2 ;;
+    --print-channels)         PRINT_CHANNELS=1;            shift ;;
     *) echo "[watchdog:$WORKER] Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -68,6 +72,14 @@ NAMESPACE="${INBOX_CHANNEL%%-*}"
 TELEMETRY_CHANNEL="${NAMESPACE}-telemetry"
 STATUS_CHANNEL="${NAMESPACE}-status"
 RATE_LIMIT_CHANNEL="${NAMESPACE}-rate-limits"
+
+# Multi-hyphen inbox names (cb-protocol-qa, dv-backend-services) must map to the namespace ROOT
+# channels; --print-channels exposes the derivation so test-heartbeat-pipeline.js can pin it.
+if [[ "$PRINT_CHANNELS" -eq 1 ]]; then
+  printf 'namespace=%s\ntelemetry=%s\nstatus=%s\nrate_limits=%s\npatrol_watch=%s\n' \
+    "$NAMESPACE" "$TELEMETRY_CHANNEL" "$STATUS_CHANNEL" "$RATE_LIMIT_CHANNEL" "$PATROL_WATCH_CHANNEL"
+  exit 0
+fi
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 

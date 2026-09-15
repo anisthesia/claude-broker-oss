@@ -33,6 +33,7 @@ const SUITES = [
   "test-regression-fixes.js",
   "test-schema-validation.js",
   "test-heartbeat.js",
+  "test-heartbeat-pipeline.js",
   "test-protocol-ops.js",
   "test-git-protocol.js",
 ];

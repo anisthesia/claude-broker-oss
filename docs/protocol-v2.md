@@ -456,21 +456,23 @@ no scheduled flip.
 
 Registration scripts (one per namespace, re-runs are idempotent): `node setup-schemas.js` (dv), `node setup-schemas-cb.js` (cb), `node setup-schemas-dollex.js` (dx), `node setup-schemas-ridepro.js` (rp), `node setup-schemas-sm.js` (sm). Strict flags and versions live in each script + schema file — they are the source of truth for registration state.
 
-### Warn-only channels scheduled for the next-sprint strict flip (20)
+### Strict flip of the 20 warn-only channels (scheduled 2026-07-07, executed 2026-09-15)
 
-Per `cb-2026-07-06-status-invariants` (2026-07-07):
+Per `cb-2026-07-06-status-invariants` the auth-hardening sprint left 20 channels
+warn-only. On 2026-09-15, after the observation window, 15 were flipped to strict
+(`cb-status`, `sm-status`, `rp-status`, `rp-control`, `rp-api`, `rp-admin`,
+`rp-web`, `rp-android`, `rp-ios`, `rp-qa`, `dx-control`, `dx-api`, `dx-web`,
+`dx-db`, `dx-qa`) via their registration scripts.
 
-`cb-status`, `sm-status`, `rp-status`, `rp-control`, `rp-api`, `rp-admin`,
-`rp-web`, `rp-android`, `rp-ios`, `rp-qa`, `dv-control`, `dv-backend`,
-`dv-frontend`, `dv-qa`, `dv-customer-portal`, `dx-control`, `dx-api`,
-`dx-web`, `dx-db`, `dx-qa`
+The five dv channels (`dv-control`, `dv-backend`, `dv-frontend`, `dv-qa`,
+`dv-customer-portal`) stay warn-only: `assess-dv-strict.js` found live
+violations on `dv-control`, `dv-customer-portal` and `dv-qa` (additional
+properties, enum values, task_id pattern) and dogsvilla was mid-sprint. Clean
+those senders first, then flip with `STRICT=1`-free edits to `setup-schemas.js`.
+`assess-dv-strict.js` now accepts channel names / prefixes as arguments and
+checks the most recent rows (`read_last`), so it can vet any namespace.
 
-(`dv-customer-portal` was already warn-only before the tightening.) Flip only
-after a clean observation sprint — no `[claude-broker] schema warn` lines —
-and use `assess-dv-strict.js` to confirm real violation counts on dv channels
-before flipping them.
-
-### Registry — live state as of 2026-07-07
+### Registry — live state as of 2026-09-15
 
 Versions marked `—` predate version stamping (legacy 2026-06-03 registrations).
 
@@ -484,7 +486,7 @@ Versions marked `—` predate version stamping (legacy 2026-06-03 registrations)
 | `cb-orchestrator` | strict | 1.0 |
 | `cb-protocol-qa` | strict | 1.0 |
 | `cb-reviewer` | strict | 1.0 |
-| `cb-status` | warn-only | 1.1 |
+| `cb-status` | strict | 1.1 |
 | `cb-telemetry` | strict | 1.1 |
 
 Registered via `node setup-schemas-cb.js` (setup-schemas-broker.js was retired 2026-07-07 — it re-registered with stale strict flags and omitted cb-reviewer).
@@ -515,11 +517,11 @@ Registered via `node setup-schemas-cb.js` (setup-schemas-broker.js was retired 2
 | `dx-backlog` | strict | 1.0 |
 | `dx-status` | strict | 1.1 |
 | `dx-telemetry` | strict | 1.1 |
-| `dx-control` | warn-only | 1.1 |
-| `dx-api` | warn-only | 1.2 |
-| `dx-db` | warn-only | 1.2 |
-| `dx-qa` | warn-only | 1.2 |
-| `dx-web` | warn-only | 1.2 |
+| `dx-control` | strict | 1.1 |
+| `dx-api` | strict | 1.2 |
+| `dx-db` | strict | 1.2 |
+| `dx-qa` | strict | 1.2 |
+| `dx-web` | strict | 1.2 |
 
 #### `rp-` (ridepro)
 
@@ -529,14 +531,14 @@ Registered via `node setup-schemas-cb.js` (setup-schemas-broker.js was retired 2
 | `rp-orchestrator` | strict | 1.0 |
 | `rp-reviewer` | strict | 1.0 |
 | `rp-telemetry` | strict | 1.1 |
-| `rp-admin` | warn-only | 1.1 |
-| `rp-android` | warn-only | 1.1 |
-| `rp-api` | warn-only | 1.1 |
-| `rp-control` | warn-only | 1.1 |
-| `rp-ios` | warn-only | 1.1 |
-| `rp-qa` | warn-only | 1.1 |
-| `rp-status` | warn-only | 1.1 |
-| `rp-web` | warn-only | 1.1 |
+| `rp-admin` | strict | 1.1 |
+| `rp-android` | strict | 1.1 |
+| `rp-api` | strict | 1.1 |
+| `rp-control` | strict | 1.1 |
+| `rp-ios` | strict | 1.1 |
+| `rp-qa` | strict | 1.1 |
+| `rp-status` | strict | 1.1 |
+| `rp-web` | strict | 1.1 |
 
 #### `sm-` (sm)
 
@@ -548,7 +550,7 @@ Registered via `node setup-schemas-cb.js` (setup-schemas-broker.js was retired 2
 | `sm-contracts` | warn-only | 1.0 |
 | `sm-control` | warn-only | 1.0 |
 | `sm-orchestrator` | warn-only | 1.0 |
-| `sm-status` | warn-only | 1.1 |
+| `sm-status` | strict | 1.1 |
 | `sm-telemetry` | warn-only | 1.1 |
 | `sm-web` | warn-only | 1.0 |
 
@@ -590,9 +592,9 @@ the registry table above is the current truth.
 Verify via `get_channel_schema`:
 ```
 Channel: cb-status
-Strict: off
+Strict: on
 Version: 1.1
-Updated: 2026-07-07T07:31:10.083Z
+Updated: 2026-09-15T…
 ```
 
 ### Versioning convention

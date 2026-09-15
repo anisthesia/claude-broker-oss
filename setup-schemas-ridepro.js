@@ -24,15 +24,15 @@ const STRICT     = process.env.STRICT === "1";
 //     rp-status       — consent_basis + affected_files made optional on type:result
 //     rp-telemetry    — added "idle-exit" to activity.state enum
 const REGISTRATIONS = [
-  { channel: "rp-api",          file: "schemas/rp-worker-inbox.json",       strict: false  },
-  { channel: "rp-admin",        file: "schemas/rp-worker-inbox.json",       strict: false  },
-  { channel: "rp-web",          file: "schemas/rp-worker-inbox.json",       strict: false  },
-  { channel: "rp-android",      file: "schemas/rp-worker-inbox.json",       strict: false  },
-  { channel: "rp-ios",          file: "schemas/rp-worker-inbox.json",       strict: false  },
-  { channel: "rp-qa",           file: "schemas/rp-worker-inbox.json",       strict: false  },
+  { channel: "rp-api",          file: "schemas/rp-worker-inbox.json",       strict: true  },
+  { channel: "rp-admin",        file: "schemas/rp-worker-inbox.json",       strict: true  },
+  { channel: "rp-web",          file: "schemas/rp-worker-inbox.json",       strict: true  },
+  { channel: "rp-android",      file: "schemas/rp-worker-inbox.json",       strict: true  },
+  { channel: "rp-ios",          file: "schemas/rp-worker-inbox.json",       strict: true  },
+  { channel: "rp-qa",           file: "schemas/rp-worker-inbox.json",       strict: true  },
   { channel: "rp-orchestrator", file: "schemas/rp-orchestrator-inbox.json", strict: true  },
-  { channel: "rp-status",       file: "schemas/rp-status.json",             strict: false  },
-  { channel: "rp-control",      file: "schemas/rp-control.json",            strict: false  },
+  { channel: "rp-status",       file: "schemas/rp-status.json",             strict: true  },
+  { channel: "rp-control",      file: "schemas/rp-control.json",            strict: true  },
   { channel: "rp-telemetry",    file: "schemas/rp-telemetry.json",          strict: true  },
   { channel: "rp-backlog",      file: "schemas/rp-backlog.json",            strict: true  },
   { channel: "rp-reviewer",     file: "schemas/reviewer-inbox.json",        strict: true  },

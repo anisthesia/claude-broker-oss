@@ -18,7 +18,7 @@ const STRICT     = process.env.STRICT === "1";
 const REGISTRATIONS = [
   { channel: "sm-orchestrator", file: "schemas/sm-orchestrator-inbox.json", strict: STRICT },
   { channel: "sm-control",      file: "schemas/sm-control.json",            strict: STRICT },
-  { channel: "sm-status",       file: "schemas/sm-status.json",             strict: false },
+  { channel: "sm-status",       file: "schemas/sm-status.json",             strict: true },
   { channel: "sm-telemetry",    file: "schemas/sm-telemetry.json",          strict: STRICT },
   { channel: "sm-backlog",      file: "schemas/sm-backlog.json",            strict: STRICT },
   // Worker inboxes

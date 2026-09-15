@@ -17,12 +17,12 @@ const STRICT     = process.env.STRICT === "1";
 
 // 4 worker inboxes share the same schema; status, control, telemetry, backlog are distinct
 const REGISTRATIONS = [
-  { channel: "dx-api",       file: "schemas/dx-worker-inbox.json", strict: false },
-  { channel: "dx-web",       file: "schemas/dx-worker-inbox.json", strict: false },
-  { channel: "dx-db",        file: "schemas/dx-worker-inbox.json", strict: false },
-  { channel: "dx-qa",        file: "schemas/dx-worker-inbox.json", strict: false },
+  { channel: "dx-api",       file: "schemas/dx-worker-inbox.json", strict: true },
+  { channel: "dx-web",       file: "schemas/dx-worker-inbox.json", strict: true },
+  { channel: "dx-db",        file: "schemas/dx-worker-inbox.json", strict: true },
+  { channel: "dx-qa",        file: "schemas/dx-worker-inbox.json", strict: true },
   { channel: "dx-status",    file: "schemas/dx-status.json", strict: true },
-  { channel: "dx-control",   file: "schemas/dx-control.json", strict: false },
+  { channel: "dx-control",   file: "schemas/dx-control.json", strict: true },
   { channel: "dx-telemetry", file: "schemas/dx-telemetry.json", strict: true },
   { channel: "dx-backlog",   file: "schemas/dx-backlog.json", strict: true },
 ];

@@ -1,6 +1,10 @@
 /**
- * Assess dv-* channels for strict schema enforcement readiness
- * Validates recent messages against their registered schemas
+ * Assess channels for strict schema enforcement readiness.
+ * Validates the most recent messages on each channel against its registered schema.
+ *
+ *   node assess-dv-strict.js                      # every dv-* channel (historical default)
+ *   node assess-dv-strict.js cb-status rp- dx-    # exact names and/or prefixes (trailing '-')
+ *   ASSESS_LIMIT=100 node assess-dv-strict.js …   # rows per channel (default 50, max 100)
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -24,8 +28,9 @@ async function connect(name) {
 }
 
 // read_messages emits lines like: [#42] 2026-07-06T08:00:00.000Z <sender>: {"type":...}
-// plus a trailing "(next since_id: N)" line; content may span multiple lines.
-const MSG_LINE = /^\[#(\d+)\] (\S+) <([^>]*)>: (.*)$/;
+// plus a trailing "(next since_id: N)" line; read_last emits [42] sender: {"type":...}.
+// Content may span multiple lines.
+const MSG_LINE = /^\[#?(\d+)\] (?:(\S+) <([^>]*)>|([^:\s]+)):\s?(.*)$/;
 
 function parseMessages(text) {
   if (!text || text.startsWith("No new messages")) return [];
@@ -34,7 +39,7 @@ function parseMessages(text) {
     if (/^\(next since_id: \d+\)$/.test(line.trim())) continue;
     const m = line.match(MSG_LINE);
     if (m) {
-      raw.push({ id: parseInt(m[1], 10), timestamp: m[2], sender: m[3], text: m[4] });
+      raw.push({ id: parseInt(m[1], 10), timestamp: m[2] || null, sender: m[3] ?? m[4], text: m[5] });
     } else if (raw.length > 0) {
       raw[raw.length - 1].text += "\n" + line;
     }
@@ -69,9 +74,14 @@ async function main() {
   const res = await client.callTool({ name: "list_channels", arguments: {} });
   const channelText = res.content[0].text;
   const channels = channelText.split('\n').map(line => line.split('\t')[0]).filter(ch => ch);
-  const dvChannels = channels.filter(ch => ch.startsWith("dv-"));
+  const targets = process.argv.slice(2);
+  const wanted = ch => targets.length === 0
+    ? ch.startsWith("dv-")
+    : targets.some(t => t.endsWith("-") ? ch.startsWith(t) : ch === t);
+  const dvChannels = [...new Set([...channels.filter(wanted), ...targets.filter(t => !t.endsWith("-"))])];
+  const LIMIT = Math.min(100, Math.max(1, parseInt(process.env.ASSESS_LIMIT || "50", 10) || 50));
 
-  console.log(`Found ${dvChannels.length} dv-* channels\n`);
+  console.log(`Found ${dvChannels.length} channel(s) matching ${targets.length ? targets.join(" ") : "dv-*"} (checking last ${LIMIT} rows each)\n`);
 
   const results = [];
 
@@ -102,7 +112,7 @@ async function main() {
     // Read messages
     let messages = [];
     try {
-      const res = await client.callTool({ name: "read_messages", arguments: { channel, limit: 20 } });
+      const res = await client.callTool({ name: "read_last", arguments: { channel, n: LIMIT } });
       const text = res.content[0]?.text;
       if (text) {
         messages = parseMessages(text);
@@ -124,7 +134,10 @@ async function main() {
       violations.push({ msg_id: null, errors: [{ message: `Schema failed to compile: ${compileError}` }] });
     } else {
       for (const msg of messages) {
-        if (msg.content === null) continue; // non-JSON content — server skips validation too
+        if (msg.content === null) { // non-JSON content — strict channels reject it (validateContent)
+          violations.push({ msg_id: msg.id, errors: [{ message: "content is not valid JSON" }] });
+          continue;
+        }
         const valid = validate(msg.content);
         if (!valid) {
           violations.push({
@@ -188,9 +201,9 @@ async function main() {
   if (safe.length > 0) {
     console.log(`${safe.length} channel(s) are ready for strict-flip: ${safe.map(r => r.channel).join(', ')}`);
   } else if (noMessages.length > 0) {
-    console.log("All dv-* channels have schemas but no recent messages. Safe to flip once messages are validated.");
+    console.log("All matched channels have schemas but no recent messages. Safe to flip once messages are validated.");
   } else {
-    console.log("Cannot flip any dv-* channels to strict until violations are resolved.");
+    console.log("Cannot flip any matched channels to strict until violations are resolved.");
   }
 
   await transport.close();

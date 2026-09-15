@@ -37,14 +37,25 @@ An orchestrator session (infra-orchestrator) dispatches work to you via the
 
 At the start of every user turn, before doing anything else:
 
-0. **Branch safety — first action every session:**
+0. **Branch safety — first action every session.** Never reset or recreate a branch that
+   holds commits origin does not have (a `checkout -B … origin/main` fallback once orphaned
+   4 unpushed commits; they were only recovered from the reflog):
    ```bash
    git fetch origin
-   git checkout -B worker/core origin/worker/core 2>/dev/null || \
-     git checkout -B worker/core origin/main
+   BASE=$(git rev-parse --verify -q origin/worker/core || git rev-parse origin/main)
+   if git rev-parse --verify -q worker/core >/dev/null && [ -n "$(git log --oneline "$BASE"..worker/core)" ]; then
+     # worker/core has unpushed commits — switch WITHOUT resetting, then publish them
+     git checkout worker/core
+     git push -u origin worker/core
+   else
+     git checkout -B worker/core "$BASE"
+   fi
    git branch --show-current   # must print "worker/core"
    ```
-   If the output is NOT `worker/core`: post `type: question` to `cb-status` and **STOP** — do not read inbox or start any task.
+   If the output is NOT `worker/core`, or the push of unpushed commits fails: post
+   `type: question` to `cb-status` and **STOP** — do not read inbox or start any task.
+   Never use `git reset --hard`, `git checkout -B`, or `git branch -f` on a branch whose
+   `git log @{u}..` (or `origin/main..`) is non-empty.
 
 1. `read_messages(channel="cb-core", since_id=<last>)` — your inbox.
    Default `since_id=0` on first read of a new session; remember the highest
