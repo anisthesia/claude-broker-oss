@@ -5,7 +5,9 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+- CUSTOMER-SETUP.md describes the marker-based role install (append, `CLAUDE.local.md` for tracked
+  files, `--no-role-append`) instead of the pre-2.1 "skip if exists" behaviour.
 
 ## [2.2.0] — 2026-09-15
 

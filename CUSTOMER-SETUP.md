@@ -222,10 +222,14 @@ npm run setup -- --project /path/to/project --install-roles
 
 This copies each worker's role file into `<project>/<component>/CLAUDE.md` — exactly where the
 watchdog runs that worker's session, so it's picked up with no further steps. It **never
-overwrites an existing `CLAUDE.md`** (it skips and tells you). The orchestrator role stays in
-`roles/orchestrator.md`; use it for the session that dispatches work. Without `--install-roles`,
-place the files yourself (as the `CLAUDE.md` in each session's directory, or as the opening
-instructions).
+discards an existing `CLAUDE.md`**: the role is appended below a marker comment and everything
+outside the markers is left untouched, so re-running the wizard only refreshes the marked
+section. If the existing `CLAUDE.md` is tracked by git, the role goes into `CLAUDE.local.md`
+instead (Claude Code loads it alongside `CLAUDE.md`), so a worker checkout never gets dirtied by
+its own role file. Pass `--no-role-append` to skip any directory that already has a role file
+instead of appending. The orchestrator role stays in `roles/orchestrator.md`; use it for the
+session that dispatches work. Without `--install-roles`, place the files yourself (as the
+`CLAUDE.md` in each session's directory, or as the opening instructions).
 
 ---
 
