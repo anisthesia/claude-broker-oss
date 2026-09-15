@@ -69,9 +69,13 @@ Included by default (each can be turned off):
 - **MCP settings** (interactive prompt, or `--mcp-settings` / `--no-mcp-settings`) — writes the
   broker connection into `<project>/.mcp.json` (the project-scope MCP config Claude Code reads)
   and pre-approves it via `enabledMcpjsonServers` in `.claude/settings.json`, so sessions opened
-  in the project get the broker tools with no `claude mcp add`. `.mcp.json` carries the secret,
-  so setup adds it to the repo's local `.git/info/exclude` — fine for a localhost broker on one
-  machine; skip it for shared/remote setups.
+  in the project get the broker tools with no `claude mcp add`. If `.mcp.json` is not yet in git, setup writes the
+  secret and adds the file to the repo's local `.git/info/exclude`. If the repo already tracks
+  `.mcp.json` (Claude Code recommends committing it), setup writes `"Bearer ${BROKER_SECRET}"`
+  instead and prints the `export BROKER_SECRET=…` line to run in each shell that starts `claude`.
+- **Roles never dirty a worktree** — if the session dir already tracks a `CLAUDE.md`, the role is
+  written to `CLAUDE.local.md` (loaded alongside it by Claude Code) and git-excluded, so the
+  sprint-close preflight stays clean and the worker cannot commit its role file.
 - **Safe role install into existing CLAUDE.md files** — when a destination `CLAUDE.md` already
   exists (a committed project CLAUDE.md shows up in every worktree checkout), the wizard appends
   the role inside `<!-- claude-broker:role:start/end -->` markers instead of skipping, keeping

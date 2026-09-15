@@ -154,11 +154,24 @@ function ensureExclude(repoPath) {
   const ex = join(common, "info", "exclude");
   try {
     mkdirSync(dirname(ex), { recursive: true });
-    const cur = existsSync(ex) ? readFileSync(ex, "utf8") : "";
-    if (!cur.split("\n").includes("/CLAUDE.md")) {
-      writeFileSync(ex, cur + "\n# claude-broker: per-worker role file — never commit\n/CLAUDE.md\n");
+    let cur = existsSync(ex) ? readFileSync(ex, "utf8") : "";
+    const lines = cur.split("\n");
+    const missing = ["/CLAUDE.md", "/CLAUDE.local.md"].filter((l) => !lines.includes(l));
+    if (missing.length) {
+      writeFileSync(ex, cur + "\n# claude-broker: per-worker role file — never commit\n" + missing.join("\n") + "\n");
     }
   } catch { /* best effort */ }
+}
+
+// Where a role goes inside a session dir. If the dir already has a CLAUDE.md that git tracks
+// (a committed project CLAUDE.md shows up in every worktree), appending the role there would
+// dirty the checkout and get committed by the worker's `git add -A`. Claude Code also loads
+// CLAUDE.local.md alongside CLAUDE.md, so the role goes there instead and stays untracked.
+function roleDestFile(destDir) {
+  const claudeMd = join(destDir, "CLAUDE.md");
+  if (!existsSync(claudeMd)) return claudeMd;
+  const tracked = git(destDir, "ls-files", "--error-unmatch", "CLAUDE.md").status === 0;
+  return tracked ? join(destDir, "CLAUDE.local.md") : claudeMd;
 }
 
 const sanitizeName = (n) => n.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 64) || "app";
@@ -389,11 +402,11 @@ Advertise what you own, once per session:
 
 ## Turn-start ritual
 
-1. \`turn_start(inbox_channel="${ns}-${worker}", telemetry_channel="${ns}-telemetry", worker="${worker}", ...)\`
-   — records a heartbeat and returns your pending inbox in one call. (Manual equivalent:
-   \`read_messages(channel="${ns}-${worker}", since_id=<last>)\` + \`upsert_heartbeat(channel="${ns}-telemetry", sender="${worker}", ...)\`.)
-2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — pick up broadcasts.
-3. **Rotate check.** If any message is \`type: "rotate"\`, follow the Rotation protocol below and exit.
+1. \`turn_start(inbox_channel="${ns}-${worker}", control_channel="${ns}-control", inbox_since_id=<last>, control_since_id=<last>)\`
+   — returns your pending inbox, control broadcasts and \`rotate_requested\` in one call.
+2. \`upsert_heartbeat(channel="${ns}-telemetry", sender="${worker}", content=<heartbeat JSON>)\` — keeps one row per worker.
+   Envelope (matches \`schemas/telemetry.json\`): \`{"type":"heartbeat","from":"${worker}","ts":"<ISO-8601>","context":{"size_tokens":<n>,"tier_threshold_pct":<0-100>,"rotation_recommended":false},"activity":{"state":"working"}}\`.
+3. **Rotate check.** If \`rotate_requested\` is true, follow the Rotation protocol below and exit.
 4. For each \`type: task\` addressed to \`${worker}\` or \`*\`:
    - **Idempotency FIRST**: \`check_result(channel="${status}", task_id=<id>)\`. If \`found: true\`,
      post a \`type: note\` ("task <id> already done — skipping") and move on. Never re-run a task.
@@ -488,9 +501,10 @@ The broker MCP server is wired into your session (\`http://localhost:${port}/mcp
 
 ## Turn-start ritual
 
-1. \`turn_start(inbox_channel="${ns}-reviewer", telemetry_channel="${ns}-telemetry", worker="reviewer", ...)\`
-   — records a heartbeat and returns your pending inbox in one call.
-2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — pick up broadcasts.
+1. \`turn_start(inbox_channel="${ns}-reviewer", control_channel="${ns}-control", inbox_since_id=<last>, control_since_id=<last>)\`
+   — returns your pending inbox, control broadcasts and \`rotate_requested\` in one call; on rotate, exit cleanly.
+2. \`upsert_heartbeat(channel="${ns}-telemetry", sender="reviewer", content=<heartbeat JSON>)\` — keeps one row per worker.
+   Envelope (matches \`schemas/telemetry.json\`): \`{"type":"heartbeat","from":"reviewer","ts":"<ISO-8601>","context":{"size_tokens":<n>,"tier_threshold_pct":<0-100>,"rotation_recommended":false},"activity":{"state":"working"}}\`.
 3. For each \`type: task\`:
    - **Idempotency FIRST**: \`check_result(channel="${ns}-status", task_id=<id>)\`. If \`found: true\`,
      post a \`type: note\` ("already reviewed — skipping") and move on.
@@ -571,8 +585,10 @@ The broker MCP server is wired into your session (\`http://localhost:${port}/mcp
 
 ## Turn-start ritual
 
-1. \`turn_start(inbox_channel="${ns}-${name}", telemetry_channel="${ns}-telemetry", worker="${name}", ...)\`.
-2. \`read_messages(channel="${ns}-control", since_id=<last>)\` — broadcasts; on \`type: rotate\`, exit cleanly.
+1. \`turn_start(inbox_channel="${ns}-${name}", control_channel="${ns}-control", inbox_since_id=<last>, control_since_id=<last>)\`
+   — inbox + broadcasts + \`rotate_requested\` in one call; on rotate, exit cleanly.
+2. \`upsert_heartbeat(channel="${ns}-telemetry", sender="${name}", content=<heartbeat JSON>)\` — keeps one row per worker.
+   Envelope (matches \`schemas/telemetry.json\`): \`{"type":"heartbeat","from":"${name}","ts":"<ISO-8601>","context":{"size_tokens":<n>,"tier_threshold_pct":<0-100>,"rotation_recommended":false},"activity":{"state":"working"}}\`.
 3. Handle any \`type: task\` in your inbox first (idempotency check via
    \`check_result(channel="${ns}-status", task_id=<id>)\` before running; report like a normal worker).
 4. If the inbox is empty, this wake IS your patrol — do a patrol pass (below).
@@ -743,10 +759,10 @@ function installRoles({ baseDir, components, rolesDir, roleAppend = true }) {
   for (const comp of components) {
     const src = join(srcDir, `${comp}.md`);
     const destDir = join(baseDir, comp);
-    const dest = join(destDir, "CLAUDE.md");
     if (!existsSync(src)) { results.push({ comp, status: "no role file" }); continue; }
     if (!existsSync(destDir)) { results.push({ comp, status: "skipped — no dir" }); continue; }
-    if (!roleAppend && existsSync(dest)) { results.push({ comp, status: "skipped — CLAUDE.md exists (--no-role-append)" }); continue; }
+    const dest = roleDestFile(destDir);
+    if (!roleAppend && existsSync(dest)) { results.push({ comp, status: `skipped — ${basename(dest)} exists (--no-role-append)` }); continue; }
     const status = writeRoleInto(dest, readFileSync(src, "utf8"));
     results.push({ comp, status, path: dest.replace(dirname(baseDir) + "/", "") });
   }
@@ -759,10 +775,10 @@ function installRoles({ baseDir, components, rolesDir, roleAppend = true }) {
 function installStandaloneRole({ project, rolesDir, roleFile, destSubdir, label, roleAppend = true }) {
   const src = resolve(OUT_DIR, rolesDir, roleFile);
   const destDir = join(project, destSubdir);
-  const dest = join(destDir, "CLAUDE.md");
   if (!existsSync(src)) return { comp: label, status: "no role file" };
-  if (!roleAppend && existsSync(dest)) return { comp: label, status: "skipped — CLAUDE.md exists (--no-role-append)" };
   mkdirSync(destDir, { recursive: true });
+  const dest = roleDestFile(destDir);
+  if (!roleAppend && existsSync(dest)) return { comp: label, status: `skipped — ${basename(dest)} exists (--no-role-append)` };
   const status = writeRoleInto(dest, readFileSync(src, "utf8"));
   return { comp: label, status, path: dest.replace(dirname(project) + "/", "") };
 }
@@ -781,13 +797,18 @@ function writeMcpConfig(repoRoot, port, secret) {
     try { cfg = JSON.parse(readFileSync(p, "utf8")); }
     catch { return { path: p, status: "skipped — existing .mcp.json is not valid JSON" }; }
   }
+  // Claude Code documents .mcp.json as a file to check in and share. If this repo already
+  // tracks it, a literal secret would be committed — write a ${BROKER_SECRET} placeholder
+  // instead (Claude Code expands ${VAR} in headers) and tell the operator to export it.
+  const tracked = existsSync(join(repoRoot, ".git")) && git(repoRoot, "ls-files", "--error-unmatch", ".mcp.json").status === 0;
   cfg.mcpServers = cfg.mcpServers || {};
   cfg.mcpServers.broker = {
     type: "http",
     url: `http://localhost:${port}/mcp`,
-    headers: { Authorization: `Bearer ${secret}` },
+    headers: { Authorization: tracked ? "Bearer ${BROKER_SECRET}" : `Bearer ${secret}` },
   };
   writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+  if (tracked) return { path: p, status: "written with ${BROKER_SECRET} placeholder (.mcp.json is tracked in git)", placeholder: true };
 
   // The secret must not land in version control: ignore .mcp.json locally (no-op if
   // already tracked or not a git repo — then the summary warning below still applies).
@@ -831,23 +852,30 @@ function writeScopeGuardHooks({ project, ns, components }) {
     try { s = JSON.parse(readFileSync(sPath, "utf8")); }
     catch { return { path: sPath, status: "skipped — existing settings.json is not valid JSON" }; }
   }
-  const group = components.join("|");
+  // Hooks run under `sh -c` (dash on Debian/Ubuntu), so no bash-isms: `case` globbing instead
+  // of [[ =~ ]]. The project path is shell-quoted and, for grep, regex-escaped, so a path with
+  // spaces, dots or quotes can neither break the command nor widen the match.
+  const sq = (v) => "'" + String(v).replace(/'/g, "'\\''") + "'";
+  const ereEsc = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const inboxes = components.map((w) => `${ns}-${w}`).join(" / ");
+  // A deny decision on stdout is honoured on exit 0; exit 2 would block without the reason text.
   const deny = (reason) =>
-    `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"${reason}"}}`;
+    `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"${reason.replace(/"/g, "")}"}}`;
+  const editGlobs = components.map((w) => sq(`${project}/${w}/`) + "*").join("|");
   const editEntry = {
     matcher: "Edit|Write",
     hooks: [{
       type: "command",
-      command: `path=$(jq -r '.tool_input.file_path // ""' 2>/dev/null); [[ "$path" =~ ${project}/(${group})/ ]] && [[ "$path" != */CLAUDE.md ]] && echo '${deny(`Orchestrator must not edit worker directories directly. Dispatch via broker to the appropriate worker inbox (${inboxes}). Exception: CLAUDE.md files may be edited directly.`)}' && exit 1; exit 0`,
+      command: `path=$(jq -r '.tool_input.file_path // ""' 2>/dev/null); case "$path" in */CLAUDE.md|*/CLAUDE.local.md) exit 0;; esac; case "$path" in ${editGlobs}) printf '%s\\n' ${sq(deny(`Orchestrator must not edit worker directories directly. Dispatch via broker to the appropriate worker inbox (${inboxes}). Exception: CLAUDE.md files may be edited directly.`))}; exit 0;; esac; exit 0`,
       statusMessage: GUARD_EDIT_MSG,
     }],
   };
+  const bashRe = `(>>|>|tee )[[:space:]]*${ereEsc(project)}/(${components.map(ereEsc).join("|")})/`;
   const bashEntry = {
     matcher: "Bash",
     hooks: [{
       type: "command",
-      command: `cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null); echo "$cmd" | grep -qE '(>>|>|tee )\\s*${project}/(${group})/' && echo '${deny("Orchestrator must not write to worker directories via Bash redirection. Dispatch via broker to the appropriate worker.")}' && exit 1; exit 0`,
+      command: `cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null); if printf '%s' "$cmd" | grep -qE ${sq(bashRe)}; then printf '%s\\n' ${sq(deny("Orchestrator must not write to worker directories via Bash redirection. Dispatch via broker to the appropriate worker."))}; exit 0; fi; exit 0`,
       statusMessage: GUARD_BASH_MSG,
     }],
   };
@@ -963,6 +991,13 @@ async function main() {
     ? (readFileSync(envPath, "utf8").match(/^PRUNE_EXEMPT=(.*)$/m)?.[1] || "").split(",").map((s) => s.trim()).filter(Boolean)
     : [];
   const pruneExempt = [...new Set([...prevPrune, `${ns}-backlog`, `${ns}-sprint-retrospective`])].join(",");
+  // Anything the wizard does not manage (PRUNE_MAX_AGE_MS, WORKERS_LOG_DIR, DB tuning, …) is
+  // carried over verbatim, so a re-run — interactive or --yes — never silently drops settings.
+  const MANAGED_ENV = new Set(["PORT", "SHARED_SECRET", "DB_PATH", "TELEMETRY_CHANNEL", "RATE_LIMIT_CHANNEL", "PRUNE_EXEMPT", "WORKERS_CONFIG", "WATCHDOG_BIN", "WORKERS_TMUX_SESSION", "TMUX_BIN"]);
+  const preservedEnv = existsSync(envPath)
+    ? readFileSync(envPath, "utf8").split("\n").filter((l) => { const m = l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/); return m && !MANAGED_ENV.has(m[1]); })
+    : [];
+  if (preservedEnv.length) preservedEnv.unshift("", "# Preserved from the previous .env (not managed by setup)");
   if (writeEnv) {
     const env = [
       `# Generated by \`npm run setup\` for ${basename(project)}`,
@@ -986,6 +1021,7 @@ async function main() {
         `WORKERS_TMUX_SESSION=${tmuxSession}`,
         `TMUX_BIN=${tmuxBin}`,
       ] : []),
+      ...preservedEnv,
       ``,
     ].join("\n");
     writeFileSync(envPath, env, "utf8");
@@ -1193,7 +1229,10 @@ async function main() {
   }
   if (mcpWritten) {
     for (const w of mcpWritten) {
-      line(`  ${w.status === "written" ? c.g("✓") : c.y("•")} MCP config ${w.status}: ${w.path}`);
+      line(`  ${w.status === "written" || w.placeholder ? c.g("✓") : c.y("•")} MCP config ${w.status}: ${w.path}`);
+    }
+    if (mcpWritten.some((w) => w.placeholder)) {
+      line(`    ${c.y("Export the secret in every shell that runs claude there:")} ${c.b(`export BROKER_SECRET=${secret}`)}`);
     }
   }
   if (hooksWritten) {

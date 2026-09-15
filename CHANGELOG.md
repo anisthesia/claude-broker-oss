@@ -28,6 +28,19 @@ All notable changes to this project are documented here. This project adheres to
   `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
 
 ### Fixed
+- **Generated worker roles called a `turn_start` signature that does not exist** (`telemetry_channel`,
+  `worker`). Roles now call `turn_start(inbox_channel, control_channel, …)` and post their heartbeat
+  with `upsert_heartbeat` using an envelope that matches `schemas/telemetry.json`.
+- **Role install no longer dirties isolated worktrees.** When the session dir already tracks a
+  `CLAUDE.md`, the role is written to `CLAUDE.local.md` (which Claude Code loads alongside it) and
+  excluded from git, so sprint-close preflight passes and `git add -A` cannot commit the role.
+- **The wizard never writes the bearer secret into a tracked `.mcp.json`.** If the file is already
+  in git it writes `"Bearer ${BROKER_SECRET}"` (Claude Code expands it) and prints the export line.
+- **Scope-guard hooks are POSIX `sh`** (they were bash-only and silently inert under dash) and the
+  project path is shell-quoted and regex-escaped, so paths with spaces or dots neither break nor
+  widen the guard.
+- **`--yes` no longer drops unmanaged `.env` settings.** Keys the wizard does not own
+  (`PRUNE_MAX_AGE_MS`, `WORKERS_LOG_DIR`, …) are carried over under a "Preserved" header.
 - **A missing or non-executable `WATCHDOG_BIN` no longer crashes the broker.** `start_worker` checks
   the binary up front and returns a tool error; the spawned process also gets an `error` handler so
   a late spawn failure is logged instead of raised as an uncaught exception.

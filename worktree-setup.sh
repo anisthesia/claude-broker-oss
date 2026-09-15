@@ -73,9 +73,11 @@ COMMON="$(cd "$PROJECT" && git rev-parse --git-common-dir)"
 EXCLUDE="$COMMON/info/exclude"
 mkdir -p "$(dirname "$EXCLUDE")"
 touch "$EXCLUDE"
-if ! grep -qxF "/CLAUDE.md" "$EXCLUDE"; then
-  printf '\n# claude-broker: per-worker role file at worktree root — never commit\n/CLAUDE.md\n' >> "$EXCLUDE"
-  echo "[worktree-setup] excluded /CLAUDE.md from commits (worker role files stay local)"
-fi
+for f in /CLAUDE.md /CLAUDE.local.md; do
+  if ! grep -qxF "$f" "$EXCLUDE"; then
+    printf '\n# claude-broker: per-worker role file at worktree root — never commit\n%s\n' "$f" >> "$EXCLUDE"
+    echo "[worktree-setup] excluded $f from commits (worker role files stay local)"
+  fi
+done
 
 echo "[worktree-setup] done. Point each worker's --repo-root / --work-dir at its worktree."
