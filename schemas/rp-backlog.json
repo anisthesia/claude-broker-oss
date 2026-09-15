@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ridepro rp-backlog envelope",
+  "description": "Persistent deferred task register. NEVER purge this channel — it survives all sprint-boundary purges.",
+  "type": "object",
+  "required": ["type", "task_id", "subject"],
+  "properties": {
+    "type": { "enum": ["deferred", "deferred-resolved"] },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": { "enum": ["api", "admin", "web", "android", "ios", "qa", "orchestrator"] },
+    "to": { "const": "orchestrator" },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {
+      "type": "object",
+      "properties": {
+        "resolved_in_sprint": { "type": "string" },
+        "outcome": { "enum": ["promoted", "cancelled", "superseded"] },
+        "promoted_sprint": { "type": "string" },
+        "promoted_at": { "type": "string" }
+      }
+    },
+    "deferred_reason": { "type": "string" }
+  },
+  "additionalProperties": false
+}

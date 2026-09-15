@@ -121,7 +121,8 @@ All configuration is via environment variables (or `.env`). The full list, with 
 | `PORT` | `8080` | Listen port |
 | `SHARED_SECRET` | — | Bearer token; **required** (or set `BROKER_ALLOW_NO_AUTH=1`) |
 | `DB_PATH` | `./broker.db` | SQLite file |
-| `PRUNE_MAX_AGE_MS` | 48h | Auto-delete messages older than this |
+| `PRUNE_MAX_AGE_MS` | 48h | Auto-delete chatter (heartbeats, status, notes) older than this |
+| `PRUNE_SIGNAL_MAX_AGE_MS` | 30d | Retention for signal-type messages (the audit trail) |
 | `PRUNE_EXEMPT` | — | Channels never auto-pruned (comma-separated) |
 
 ## Testing

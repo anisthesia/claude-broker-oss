@@ -1,0 +1,516 @@
+[
+  {
+    "name": "backend",
+    "ns": "dv",
+    "args": [
+      "backend",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/backend"
+    ]
+  },
+  {
+    "name": "backend-services",
+    "ns": "dv",
+    "args": [
+      "backend-services",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/bs"
+    ]
+  },
+  {
+    "name": "frontend",
+    "ns": "dv",
+    "args": [
+      "frontend",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/frontend"
+    ]
+  },
+  {
+    "name": "customer-portal",
+    "ns": "dv",
+    "args": [
+      "customer-portal",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/portal"
+    ]
+  },
+  {
+    "name": "marketing-site",
+    "ns": "dv",
+    "args": [
+      "marketing-site",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/marketing"
+    ]
+  },
+  {
+    "name": "partner",
+    "ns": "dv",
+    "args": [
+      "partner",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/partner"
+    ]
+  },
+  {
+    "name": "fintech",
+    "ns": "dv",
+    "args": [
+      "fintech",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/fintech"
+    ]
+  },
+  {
+    "name": "supply-chain",
+    "ns": "dv",
+    "args": [
+      "supply-chain",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/supply-chain"
+    ]
+  },
+  {
+    "name": "devops",
+    "ns": "dv",
+    "args": [
+      "devops",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/devops"
+    ]
+  },
+  {
+    "name": "security",
+    "ns": "dv",
+    "args": [
+      "security",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/security"
+    ]
+  },
+  {
+    "name": "mobile",
+    "ns": "dv",
+    "args": [
+      "mobile",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/mobile"
+    ]
+  },
+  {
+    "name": "hardware",
+    "ns": "dv",
+    "args": [
+      "hardware",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/hardware"
+    ]
+  },
+  {
+    "name": "marketplace",
+    "ns": "dv",
+    "args": [
+      "marketplace",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/marketplace"
+    ]
+  },
+  {
+    "name": "health",
+    "ns": "dv",
+    "args": [
+      "health",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/health"
+    ]
+  },
+  {
+    "name": "pet-graph",
+    "ns": "dv",
+    "args": [
+      "pet-graph",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/pet-graph"
+    ]
+  },
+  {
+    "name": "commerce",
+    "ns": "dv",
+    "args": [
+      "commerce",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/commerce"
+    ]
+  },
+  {
+    "name": "physical-ops",
+    "ns": "dv",
+    "args": [
+      "physical-ops",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/physical-ops"
+    ]
+  },
+  {
+    "name": "content",
+    "ns": "dv",
+    "args": [
+      "content",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/content"
+    ]
+  },
+  {
+    "name": "community",
+    "ns": "dv",
+    "args": [
+      "community",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/community"
+    ]
+  },
+  {
+    "name": "comms",
+    "ns": "dv",
+    "args": [
+      "comms",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/comms"
+    ]
+  },
+  {
+    "name": "data",
+    "ns": "dv",
+    "args": [
+      "data",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/data"
+    ]
+  },
+  {
+    "name": "ai",
+    "ns": "dv",
+    "args": [
+      "ai",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/ai"
+    ]
+  },
+  {
+    "name": "ai-ops",
+    "ns": "dv",
+    "args": [
+      "ai-ops",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/ai-ops"
+    ]
+  },
+  {
+    "name": "qa",
+    "ns": "dv",
+    "args": [
+      "qa",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla",
+      "--inbox-channel",
+      "dv-qa"
+    ]
+  },
+  {
+    "name": "qa-backend",
+    "ns": "dv",
+    "args": [
+      "qa-backend"
+    ]
+  },
+  {
+    "name": "cfo",
+    "ns": "dv",
+    "args": [
+      "cfo",
+      "--patrol-interval",
+      "1800"
+    ]
+  },
+  {
+    "name": "seo",
+    "ns": "dv",
+    "args": [
+      "seo",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/seo",
+      "--patrol-interval",
+      "1800",
+      "--patrol-watch-channel",
+      "dv-growth-status"
+    ]
+  },
+  {
+    "name": "designer",
+    "ns": "dv",
+    "args": [
+      "designer",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/designer"
+    ]
+  },
+  {
+    "name": "social",
+    "ns": "dv",
+    "args": [
+      "social",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/social"
+    ]
+  },
+  {
+    "name": "social-analytics",
+    "ns": "dv",
+    "args": [
+      "social-analytics",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla-wt/social-analytics",
+      "--patrol-interval",
+      "1800",
+      "--patrol-watch-channel",
+      "dv-growth-status"
+    ]
+  },
+  {
+    "name": "platform-orch",
+    "ns": "dv",
+    "args": [
+      "orchestrators/platform",
+      "--inbox-channel",
+      "dv-platform-orch"
+    ]
+  },
+  {
+    "name": "consumer-orch",
+    "ns": "dv",
+    "args": [
+      "orchestrators/consumer",
+      "--inbox-channel",
+      "dv-consumer-orch"
+    ]
+  },
+  {
+    "name": "growth-orch",
+    "ns": "dv",
+    "args": [
+      "orchestrators/growth",
+      "--inbox-channel",
+      "dv-growth-orch"
+    ]
+  },
+  {
+    "name": "intel-orch",
+    "ns": "dv",
+    "args": [
+      "orchestrators/intel",
+      "--inbox-channel",
+      "dv-intel-orch"
+    ]
+  },
+  {
+    "name": "core",
+    "ns": "cb",
+    "args": [
+      "workers/core",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-core"
+    ]
+  },
+  {
+    "name": "protocol-qa",
+    "ns": "cb",
+    "args": [
+      "workers/protocol-qa",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-protocol-qa"
+    ]
+  },
+  {
+    "name": "infra-orch",
+    "ns": "cb",
+    "args": [
+      "orchestrators/infra",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-orchestrator"
+    ]
+  },
+  {
+    "name": "rp-api",
+    "ns": "rp",
+    "args": [
+      "ridepro-api",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/api",
+      "--inbox-channel",
+      "rp-api"
+    ]
+  },
+  {
+    "name": "rp-admin",
+    "ns": "rp",
+    "args": [
+      "ridepro-admin",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/admin",
+      "--inbox-channel",
+      "rp-admin"
+    ]
+  },
+  {
+    "name": "rp-web",
+    "ns": "rp",
+    "args": [
+      "ridepro-website",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/web",
+      "--inbox-channel",
+      "rp-web"
+    ]
+  },
+  {
+    "name": "rp-android",
+    "ns": "rp",
+    "args": [
+      "android",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/android",
+      "--inbox-channel",
+      "rp-android",
+      "--max-session-minutes",
+      "90"
+    ]
+  },
+  {
+    "name": "rp-ios",
+    "ns": "rp",
+    "args": [
+      "ios",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/ios",
+      "--inbox-channel",
+      "rp-ios"
+    ]
+  },
+  {
+    "name": "rp-qa",
+    "ns": "rp",
+    "args": [
+      "qa",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro",
+      "--inbox-channel",
+      "rp-qa"
+    ]
+  },
+  {
+    "name": "rp-orch",
+    "ns": "rp",
+    "args": [
+      "orchestrators",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro",
+      "--inbox-channel",
+      "rp-orchestrator"
+    ]
+  },
+  {
+    "name": "sm-contracts",
+    "ns": "sm",
+    "args": [
+      "workers/contracts",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-contracts"
+    ]
+  },
+  {
+    "name": "sm-backend",
+    "ns": "sm",
+    "args": [
+      "workers/backend",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-backend"
+    ]
+  },
+  {
+    "name": "sm-web",
+    "ns": "sm",
+    "args": [
+      "workers/web",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-web"
+    ]
+  },
+  {
+    "name": "sm-orch",
+    "ns": "sm",
+    "args": [
+      "orchestrators/SattaMatka",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-orchestrator"
+    ]
+  },
+  {
+    "name": "dv-reviewer",
+    "ns": "dv",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/dogsvilla",
+      "--inbox-channel",
+      "dv-reviewer"
+    ]
+  },
+  {
+    "name": "rp-reviewer",
+    "ns": "rp",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro",
+      "--inbox-channel",
+      "rp-reviewer"
+    ]
+  },
+  {
+    "name": "sm-reviewer",
+    "ns": "sm",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-reviewer"
+    ]
+  },
+  {
+    "name": "cb-reviewer",
+    "ns": "cb",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-reviewer"
+    ]
+  }
+]

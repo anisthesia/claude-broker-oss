@@ -33,7 +33,7 @@ async function call(client, tool, args) {
 }
 
 function buildInboxMap() {
-  const configFiles = ["workers.json", "workers.example.json"];
+  const configFiles = ["workers.json", "workers-all.json", "workers-broker.json", "workers-dogsvilla.json", "workers.example.json"];
   const map = {};
 
   for (const file of configFiles) {

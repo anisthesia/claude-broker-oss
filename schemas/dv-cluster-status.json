@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dogsvilla cluster status envelope",
+  "description": "Worker firehose for a domain cluster (intel, platform). Carries results, status updates, and notes from cluster workers back to their domain orchestrator.",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["status", "result", "question", "note", "contract-change", "handoff"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker identifier posting this message."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Recipient identifier — typically the domain orchestrator or '*'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "summary": {
+      "type": "string",
+      "description": "Required on type:result. Format: 'PASS — <≤30-word sentence>' / 'FAIL — …' / 'SKIP — …'."
+    },
+    "affected_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Source files touched. Required on type:result when body.commits is non-empty."
+    },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "result" } }, "required": ["type"] },
+      "then": {
+        "required": ["summary"],
+        "properties": {
+          "body": {
+            "type": "object",
+            "required": ["consent_basis"],
+            "properties": {
+              "consent_basis": {
+                "type": "string",
+                "description": "How consent was obtained.",
+                "examples": ["orchestrator-dispatch-only", "terminal-human", "approval-token:#<msg_id>"]
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["sha", "branch"],
+                  "properties": {
+                    "sha":     { "type": "string" },
+                    "branch":  { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": { "const": "result" },
+          "body": {
+            "type": "object",
+            "properties": {
+              "commits": { "type": "array", "minItems": 1 }
+            },
+            "required": ["commits"]
+          }
+        },
+        "required": ["type", "body"]
+      },
+      "then": {
+        "required": ["affected_files"],
+        "properties": {
+          "affected_files": { "minItems": 1 }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

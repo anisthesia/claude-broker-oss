@@ -33,6 +33,8 @@ const SUITES = [
   "test-regression-fixes.js",
   "test-schema-validation.js",
   "test-heartbeat.js",
+  "test-protocol-ops.js",
+  "test-git-protocol.js",
 ];
 
 function log(msg) {
@@ -81,6 +83,8 @@ async function main() {
       SHARED_SECRET: SECRET,
       // Neutralize live-ops env that server.js may act on
       WATCHDOG_BIN: "",
+      WORKERS_TMUX_SESSION: "",
+      TMUX_BIN: "",
       WORKERS_CONFIG: workersConfig,
       WORKERS_LOG_DIR: join(tmpDir, "worker-logs"),
     },
@@ -128,7 +132,9 @@ async function main() {
       log(`running ${suite} ...`);
       const started = Date.now();
       const r = spawnSync(process.execPath, [join(ROOT, suite)], {
-        env: { ...process.env, BROKER_URL, SHARED_SECRET: SECRET },
+        // Suites read WORKERS_TMUX_SESSION to decide whether to run tmux cases — keep the
+        // live .env from leaking into them, same as for the scratch broker above.
+        env: { ...process.env, BROKER_URL, SHARED_SECRET: SECRET, WORKERS_TMUX_SESSION: "", TMUX_BIN: "" },
         cwd: ROOT,
         stdio: "inherit",
         timeout: 10 * 60 * 1000,

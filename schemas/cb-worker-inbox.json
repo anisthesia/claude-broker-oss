@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "claude-broker cb-worker-inbox envelope",
+  "description": "Messages dispatched into a cb- worker inbox (cb-core, cb-protocol-qa).",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": [
+        "task",
+        "question",
+        "note",
+        "rotate"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+",
+      "description": "Format: cb-YYYY-MM-DD-<slug>, e.g. 'cb-2026-06-19-add-tool'."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Dispatcher identity: 'orchestrator' or 'infra-orch'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target worker: 'core', 'protocol-qa', or '*' for broadcast."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "description": "<task_id>:<worker> that must have type:result on cb-status before this task starts."
+      }
+    },
+    "required_checks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Checks the worker must run before posting type:result, e.g. ['test', 'committed']."
+    },
+    "body": {},
+    "acceptance_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Checklist of deliverables the worker must confirm before posting type:result."
+    },
+    "refs": { "type": "array" },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One sentence explaining why this task exists. Helps workers make judgment calls."
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "read": { "type": "array", "items": { "type": "string" } },
+        "write": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false,
+      "description": "Per-task file scope. write lists files this task is expected to modify."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "run", "pass_condition"],
+        "properties": {
+          "name": { "type": "string" },
+          "run": { "type": "string", "description": "Exact shell command to execute." },
+          "pass_condition": { "type": "string", "description": "What a passing result looks like." }
+        },
+        "additionalProperties": false
+      },
+      "description": "Executable checks with pass conditions. Replaces vague required_checks labels."
+    },
+    "background": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional 2-3 sentences of deeper context — prior decisions, related tasks, what failed before."
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["small", "medium", "large"],
+      "description": "Complexity hint: small (<30 min), medium (30-90 min), large (>90 min, expect context rotation)."
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Per-task do-NOT rules the worker must obey even when they conflict with defaults."
+    },
+    "result_template": {
+      "type": "object",
+      "description": "Skeleton JSON the worker fills in for the result body; ensures required fields are present.",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "task" } }, "required": ["type"] },
+      "then": { "required": ["body"] }
+    }
+  ],
+  "additionalProperties": false
+}

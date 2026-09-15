@@ -96,12 +96,12 @@ async function main() {
   expect(/Sent #/.test(r.content[0].text) && !/WARN/.test(r.content[0].text),
     "valid envelope passes under strict", r.content[0].text);
 
-  console.log("\n[step 6] non-JSON content under STRICT — should skip validation and send");
+  console.log("\n[step 6] non-JSON content under STRICT — should reject (a schema channel expects JSON envelopes)");
   r = await client.callTool({
     name: "send_message",
     arguments: { channel: TEST_CHANNEL, sender: "orchestrator", content: "just a plain string" },
   });
-  expect(/Sent #/.test(r.content[0].text), "non-JSON content sent (validation skipped)", r.content[0].text);
+  expect(r.isError === true && /not valid JSON/.test(r.content[0].text), "non-JSON content rejected under strict", r.content[0].text);
 
   console.log("\n[step 7] enum violation (type: 'invalid-type') — should reject");
   const wrongCase = JSON.stringify({

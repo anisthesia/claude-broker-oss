@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ridepro rp-status envelope",
+  "description": "Worker firehose — results, status updates, blockers, questions back to orchestrator.",
+  "version": "1.1",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "status",
+        "result",
+        "question",
+        "note",
+        "contract-change",
+        "handoff"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "from": {
+      "enum": [
+        "api",
+        "admin",
+        "web",
+        "android",
+        "ios",
+        "qa",
+        "orchestrator"
+      ]
+    },
+    "to": {
+      "enum": [
+        "orchestrator",
+        "api",
+        "admin",
+        "web",
+        "android",
+        "ios",
+        "qa",
+        "*"
+      ]
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3
+    },
+    "summary": {
+      "type": "string",
+      "description": "Required on type:result. Format: 'PASS — ...' / 'FAIL — ...' / 'SKIP — ...'"
+    },
+    "affected_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Source files touched by this task."
+    },
+    "body": {},
+    "refs": {
+      "type": "array"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "result"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "consent_basis": {
+                "type": "string",
+                "description": "How consent was obtained. Required only on production-touching results.",
+                "examples": [
+                  "orchestrator-dispatch-only",
+                  "terminal-human",
+                  "approval-token:#<msg_id>"
+                ]
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "sha",
+                    "branch"
+                  ],
+                  "properties": {
+                    "sha": {
+                      "type": "string"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "result"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "commits": {
+                "type": "array",
+                "minItems": 1
+              }
+            },
+            "required": [
+              "commits"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "body"
+        ]
+      },
+      "then": {
+        "required": [
+          "affected_files"
+        ],
+        "properties": {
+          "affected_files": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "result"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "production_touching": {
+                "const": true
+              }
+            },
+            "required": [
+              "production_touching"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "body"
+        ]
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "required": [
+              "consent_basis"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

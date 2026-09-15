@@ -1,0 +1,263 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dogsvilla worker-inbox envelope",
+  "description": "Messages dispatched into a worker inbox (dv-backend, dv-frontend, dv-customer-portal, etc.).",
+  "version": "1.1",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "task",
+        "question",
+        "note",
+        "approval-token",
+        "approval-revoke",
+        "contract-change",
+        "consent-grant",
+        "consent-deny",
+        "rotate",
+        "reload"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9-]*-[0-9]{4}-[0-9]{2}-[0-9]{2}(-[a-z0-9-]+)?$",
+      "description": "Format: <slug>-YYYY-MM-DD or <slug>-YYYY-MM-DD-<short-name>, e.g. 'add-auth-2026-06-09-jwt' or 'baseline-2026-06-20'."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Dispatcher identity: 'orchestrator', a domain orchestrator name, 'qa', or another dispatching worker."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target worker name, e.g. 'backend', 'frontend', 'customer-portal', or '*' for broadcast."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "description": "<task_id>:<worker> reference that must have a type:result before this task starts."
+      },
+      "description": "Task IDs that must complete before this task starts."
+    },
+    "required_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Exact checks the worker must run before reporting type:result, e.g. ['lint', 'build', 'test', 'committed']."
+    },
+    "wire_compat": {
+      "enum": [
+        "additive",
+        "breaking"
+      ],
+      "description": "Required on type:contract-change."
+    },
+    "affected_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional list of files expected to change, provided by the orchestrator for context."
+    },
+    "require_module_baseline": {
+      "type": "boolean",
+      "description": "When true, worker must run module tests before any code changes and record baseline pass count."
+    },
+    "baseline_task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional reference to a prior baseline task whose results apply to this task."
+    },
+    "ui_verified_instructions": {
+      "type": "string",
+      "description": "Required when 'ui_verified' appears in required_checks. Exact screen, action, and expected outcome — specific enough that the worker cannot satisfy it by reading code alone. Example: 'Open /dogs/:id → click Award Badge → confirm dropdown shows badge names'."
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Checklist of deliverables the worker must confirm before posting type:result."
+    },
+    "body": {},
+    "refs": {
+      "type": "array"
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One sentence explaining why this task exists."
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Per-task file scope."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "run",
+          "pass_condition"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          },
+          "pass_condition": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Executable checks with pass conditions."
+    },
+    "background": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional 2-3 sentences of deeper context — prior decisions, related tasks, what failed before."
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "description": "Complexity hint: small (<30 min), medium (30-90 min), large (>90 min, expect context rotation)."
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Per-task do-NOT rules the worker must obey even when they conflict with defaults."
+    },
+    "result_template": {
+      "type": "object",
+      "description": "Skeleton JSON the worker fills in for the result body; ensures required fields are present.",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "body"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "contract-change"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "wire_compat"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "approval-token"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "type": "object",
+            "required": [
+              "authorized_actions",
+              "env",
+              "scope_workers",
+              "expires_at"
+            ],
+            "properties": {
+              "authorized_actions": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "string"
+              },
+              "scope_workers": {
+                "type": "array",
+                "minItems": 1
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        "required": [
+          "body"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

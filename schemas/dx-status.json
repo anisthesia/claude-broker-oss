@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Dollex ERP dx-status envelope",
+  "description": "Worker firehose — results, status updates, blockers, questions back to orchestrator.",
+  "version": "1.1",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["status", "result", "question", "note", "contract-change", "handoff"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": { "enum": ["api", "web", "db", "qa"] },
+    "to": { "enum": ["orchestrator", "api", "web", "db", "qa"] },
+    "subject": { "type": "string", "minLength": 3 },
+    "summary": {
+      "type": "string",
+      "description": "Required on type:result. Format: 'PASS — <≤30-word sentence>' / 'FAIL — …' / 'SKIP — …'."
+    },
+    "affected_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Source files touched by this task."
+    },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "result" } }, "required": ["type"] },
+      "then": { "required": ["summary"] }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": { "const": "result" },
+          "body": {
+            "type": "object",
+            "properties": { "production_touching": { "const": true } },
+            "required": ["production_touching"]
+          }
+        },
+        "required": ["type", "body"]
+      },
+      "then": {
+        "properties": {
+          "body": { "required": ["consent_basis"] }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

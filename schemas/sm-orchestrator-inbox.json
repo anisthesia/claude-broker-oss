@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SattaMatka sm-orchestrator-inbox envelope",
+  "description": "Messages sent into the sm-orchestrator inbox — escalations, questions, and notes from workers (contracts, backend, web).",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["question", "note", "status"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sending worker: 'contracts', 'backend', or 'web'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Should be 'orchestrator' or 'sm-orch'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "additionalProperties": false
+}

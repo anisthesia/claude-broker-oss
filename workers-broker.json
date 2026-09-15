@@ -1,22 +1,222 @@
 [
   {
+    "name": "core",
+    "ns": "cb",
+    "args": [
+      "workers/core",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-core"
+    ]
+  },
+  {
+    "name": "protocol-qa",
+    "ns": "cb",
+    "args": [
+      "workers/protocol-qa",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-protocol-qa"
+    ]
+  },
+  {
+    "name": "infra-orch",
+    "ns": "cb",
+    "args": [
+      "orchestrators/infra",
+      "--repo-root",
+      "/Users/anis/myprojects/claude-broker-oss",
+      "--inbox-channel",
+      "cb-orchestrator"
+    ]
+  },
+  {
+    "name": "sm-contracts",
+    "ns": "sm",
+    "args": [
+      "workers/contracts",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-contracts"
+    ]
+  },
+  {
+    "name": "sm-backend",
+    "ns": "sm",
+    "args": [
+      "workers/backend",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-backend"
+    ]
+  },
+  {
+    "name": "sm-web",
+    "ns": "sm",
+    "args": [
+      "workers/web",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-web"
+    ]
+  },
+  {
+    "name": "sm-reviewer",
+    "ns": "sm",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-reviewer"
+    ]
+  },
+  {
+    "name": "sm-orch",
+    "ns": "sm",
+    "args": [
+      "orchestrators/SattaMatka",
+      "--repo-root",
+      "/Users/anis/myprojects/SattaMatka",
+      "--inbox-channel",
+      "sm-orchestrator"
+    ]
+  },
+  {
+    "name": "rp-api",
+    "ns": "rp",
+    "args": [
+      "ridepro-api",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/api",
+      "--inbox-channel",
+      "rp-api"
+    ]
+  },
+  {
+    "name": "rp-admin",
+    "ns": "rp",
+    "args": [
+      "ridepro-admin",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/admin",
+      "--inbox-channel",
+      "rp-admin"
+    ]
+  },
+  {
+    "name": "rp-web",
+    "ns": "rp",
+    "args": [
+      "ridepro-website",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/web",
+      "--inbox-channel",
+      "rp-web"
+    ]
+  },
+  {
+    "name": "rp-android",
+    "ns": "rp",
+    "args": [
+      "android",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/android",
+      "--inbox-channel",
+      "rp-android"
+    ]
+  },
+  {
+    "name": "rp-ios",
+    "ns": "rp",
+    "args": [
+      "ios",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro-wt/ios",
+      "--inbox-channel",
+      "rp-ios"
+    ]
+  },
+  {
+    "name": "rp-qa",
+    "ns": "rp",
+    "args": [
+      "qa",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro",
+      "--inbox-channel",
+      "rp-qa"
+    ]
+  },
+  {
+    "name": "rp-reviewer",
+    "ns": "rp",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro",
+      "--inbox-channel",
+      "rp-reviewer"
+    ]
+  },
+  {
+    "name": "rp-orch",
+    "ns": "rp",
+    "args": [
+      "orchestrators",
+      "--repo-root",
+      "/Users/anis/myprojects/ridepro",
+      "--inbox-channel",
+      "rp-orchestrator"
+    ]
+  },
+  {
     "name": "vp-backend",
     "ns": "vp",
-    "args": ["workers/backend", "--repo-root", "/Users/anis/myprojects/voice-platform", "--inbox-channel", "vp-backend"]
+    "args": [
+      "workers/backend",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "vp-backend"
+    ]
   },
   {
     "name": "vp-frontend",
     "ns": "vp",
-    "args": ["workers/frontend", "--repo-root", "/Users/anis/myprojects/voice-platform", "--inbox-channel", "vp-frontend"]
+    "args": [
+      "workers/frontend",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "vp-frontend"
+    ]
   },
   {
     "name": "vp-voice",
     "ns": "vp",
-    "args": ["workers/voice", "--repo-root", "/Users/anis/myprojects/voice-platform", "--inbox-channel", "vp-voice"]
+    "args": [
+      "workers/voice",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "vp-voice"
+    ]
   },
   {
     "name": "vp-reviewer",
     "ns": "vp",
-    "args": ["workers/code-reviewer", "--repo-root", "/Users/anis/myprojects/voice-platform", "--inbox-channel", "vp-reviewer"]
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/voice-platform",
+      "--inbox-channel",
+      "vp-reviewer"
+    ]
   }
 ]

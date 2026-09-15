@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SattaMatka sm-control broadcast envelope",
+  "description": "Orchestrator broadcasts to all sm- workers: sprint-start, notes, approval tokens, rotations.",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": [
+        "sprint-start",
+        "note",
+        "approval-token",
+        "approval-revoke",
+        "rotate",
+        "contract-change"
+      ]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "sprint_id": { "type": "string" },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Always 'orchestrator' or 'sm-orch'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Usually '*' for broadcast, or a specific worker: 'contracts', 'backend', 'web'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "approval-token" } }, "required": ["type"] },
+      "then": {
+        "required": ["body"],
+        "properties": {
+          "body": {
+            "type": "object",
+            "required": ["authorized_actions", "env", "scope_workers", "expires_at"],
+            "properties": {
+              "authorized_actions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+              "env": { "type": "string" },
+              "scope_workers": { "type": "array", "minItems": 1 },
+              "expires_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "sprint-start" } }, "required": ["type"] },
+      "then": { "required": ["sprint_id"] }
+    }
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ridepro rp-orchestrator-inbox envelope",
+  "description": "Messages sent into the orchestrator inbox — escalations, questions, and notes from workers.",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["question", "note", "status", "result"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "enum": ["api", "admin", "web", "android", "ios", "qa"],
+      "description": "Sending worker."
+    },
+    "to": {
+      "enum": ["orchestrator", "*"],
+      "description": "Should be 'orchestrator'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "additionalProperties": false
+}

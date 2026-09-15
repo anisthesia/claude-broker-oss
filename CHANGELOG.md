@@ -5,6 +5,46 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added
+- **`open_questions` tool** — lists `type: question` messages in a namespace that never got a reply on
+  the asker's inbox (and no self-posted result), so blocked workers are visible at orchestrator turn-start.
+- **`projection: "summary"`** on `read_messages`, `read_last` and `turn_start` — returns headline
+  envelope fields only, so a 30-result scan costs ~3 KB instead of ~150 KB.
+- **Compacting prune.** Chatter (heartbeats, status, notes, non-JSON) is pruned at `PRUNE_MAX_AGE_MS`
+  (48h); signal types (`PRUNE_SIGNAL_TYPES`, default task/result/question/error/contract-*) live for
+  `PRUNE_SIGNAL_MAX_AGE_MS` (30d).
+- **Telemetry compaction.** On `*-telemetry` channels a new row from a sender evicts that sender's
+  older transient-state rows (`HEARTBEAT_TRANSIENT_STATES`, default `working,idle-polling`), so
+  30-second watchdog heartbeats posted via `POST /messages` no longer accumulate.
+- **`GET /inbox?wait_ms=`** — server-side long-poll for watchdogs (max 60s), same response shape.
+- **`GET /metrics`** — per-tool call/error/latency counters, long-poll wake ratio, per-route hits.
+- `check_results_batch` now also returns `summaries` (latest result summary per task_id).
+- `post_gated_message` accepts the envelope's `task_id:worker` form in `depends_on` and defaults
+  `watch_channel` to `<ns>-status` for namespaced channels.
+- `send_message_batch` reports warn-only schema mismatches per message instead of silently accepting.
+- Ported the claude-broker self-maintenance fleet (`cb-` namespace: core, protocol-qa, infra-orch,
+  cb-reviewer role files and turn-start helpers), the `/setup-broker` and `/teardown-broker` slash
+  commands, `docs/protocol-v2.md`, and the per-project schema sets and registration scripts for the
+  `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
+
+### Fixed
+- **Strict schemas now reject non-JSON content.** Plain text on a strict channel was accepted
+  unvalidated; it is now rejected (warn-only channels warn and accept).
+- **Dashboard XSS.** The `ns` query parameter and namespaces derived from channel names were
+  interpolated into the page unescaped. `ns` is now validated and tab/sprint labels are escaped.
+- **Worker controls agree on tmux mode.** The REST routes behind the dashboard Start/Stop buttons
+  spawned detached subprocesses even in tmux mode and could double-start a worker; MCP tools and
+  REST now share one lifecycle (`workerRunningInfo`/`startWorker`/`stopWorker`).
+- `purge_channel` honours `PRUNE_EXEMPT` (refuses unless `force: true`), as documented.
+- `register_channel_schema` keeps the existing `strict`/`version` when they are omitted instead of
+  silently downgrading a strict channel to warn-only.
+- `get_latest_heartbeats` uses `WORKER_OFFLINE_THRESHOLD_S` for its stale check instead of a
+  hard-coded 5 minutes; `sprint_summary` counts only summaries that start with `FAIL`.
+- `WORKERS_CONFIG` is written atomically (temp file + rename) and non-array/invalid entries are ignored on load.
+- MCP server advertises the real package version; `wait_for_messages` documents its actual 60s default.
+- `/dashboard/channel` validates `limit`/`since_id` and uses prepared statements.
+- `npm test` no longer inherits `WORKERS_TMUX_SESSION` from the live `.env` into the scratch broker.
+
 ### Fixed
 - **MCP wiring now lands where Claude Code actually reads it.** The wizard used to write the broker
   `mcpServers` entry into `<project>/.claude/settings.json`, a location Claude Code ignores for MCP

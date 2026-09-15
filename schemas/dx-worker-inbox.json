@@ -1,0 +1,229 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Dollex ERP worker-inbox envelope (dx-api / dx-web / dx-db / dx-qa)",
+  "description": "Messages dispatched by the orchestrator into a worker inbox.",
+  "version": "1.2",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "task",
+        "question",
+        "note",
+        "approval-token",
+        "approval-revoke",
+        "contract-change",
+        "rotate"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*-\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$",
+      "description": "Format: <slug>-YYYY-MM-DD-<short-name>"
+    },
+    "from": {
+      "const": "orchestrator"
+    },
+    "to": {
+      "enum": [
+        "api",
+        "web",
+        "db",
+        "qa",
+        "*"
+      ]
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*-\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+:(api|web|db|qa)$"
+      },
+      "description": "<task_id>:<worker> refs that must be complete before this task starts."
+    },
+    "required_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Commands the worker must run before reporting type:result."
+    },
+    "wire_compat": {
+      "enum": [
+        "additive",
+        "breaking"
+      ],
+      "description": "Required on type:contract-change."
+    },
+    "body": {},
+    "refs": {
+      "type": "array"
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One sentence explaining why this task exists. Helps workers make judgment calls."
+    },
+    "background": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional 2-3 sentences of deeper context — prior decisions, related tasks, what failed before."
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "description": "Complexity hint: small (<30 min), medium (30-90 min), large (>90 min, expect context rotation)."
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "Per-task file scope. write lists files this task is expected to modify."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "run",
+          "pass_condition"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string",
+            "description": "Exact shell command to execute."
+          },
+          "pass_condition": {
+            "type": "string",
+            "description": "What a passing result looks like."
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Executable checks with pass conditions. Replaces vague required_checks labels."
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Per-task do-NOT rules the worker must obey even when they conflict with defaults."
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Checklist of deliverables the worker must confirm before posting type:result."
+    },
+    "result_template": {
+      "type": "object",
+      "description": "Skeleton JSON the worker fills in for the result body; ensures required fields are present.",
+      "additionalProperties": true
+    },
+    "baseline_task_id": {
+      "type": "string",
+      "description": "task_id of the sprint baseline run this task builds on."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "contract-change"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "wire_compat"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "approval-token"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "type": "object",
+            "required": [
+              "authorized_actions",
+              "env",
+              "scope_workers",
+              "expires_at"
+            ],
+            "properties": {
+              "authorized_actions": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "string"
+              },
+              "scope_workers": {
+                "type": "array",
+                "minItems": 1
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        "required": [
+          "body"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

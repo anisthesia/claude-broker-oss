@@ -22,3 +22,9 @@ roles/
 
 # OS / editor cruft
 .DS_Store
+
+# Per-worker runtime state written by workers/*/turn-start.js
+workers/*/.*-state.json
+
+# Per-machine Claude Code permissions
+.claude/settings.local.json

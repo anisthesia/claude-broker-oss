@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dogsvilla dv-telemetry heartbeat envelope",
+  "description": "Worker heartbeats for orchestrator observability. See docs/protocol-v2.md.",
+  "version": "1.1",
+  "type": "object",
+  "required": [
+    "type",
+    "from",
+    "ts",
+    "context",
+    "activity"
+  ],
+  "properties": {
+    "type": {
+      "const": "heartbeat"
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker identifier, e.g. 'backend', 'qa', 'platform-orch'."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "size_tokens",
+        "tier_threshold_pct",
+        "rotation_recommended"
+      ],
+      "properties": {
+        "size_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_create": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tier_threshold_pct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rotation_recommended": {
+          "type": "boolean"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "last_tool_call_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "current_task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "enum": [
+            "working",
+            "idle-polling",
+            "blocked-on-question",
+            "rotating",
+            "idle-exit",
+            "session-end",
+            "reviewing",
+            "coverage-patrol"
+          ],
+          "description": "working=active; idle-polling=in long-poll loop; blocked-on-question=awaiting answer; rotating=context rotation; idle-exit=exiting loop; session-end=watchdog-posted after exit; reviewing=CFO/observer reviewing; coverage-patrol=QA patrol"
+        }
+      }
+    },
+    "cost_since_start": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_create_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_usd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "exit_code": {
+      "type": "integer",
+      "description": "Process exit code — present on activity.state=session-end heartbeats posted by the watchdog."
+    }
+  },
+  "additionalProperties": false
+}

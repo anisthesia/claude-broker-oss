@@ -8,7 +8,7 @@ import { z } from "zod";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { spawn, spawnSync } from "child_process";
-import { readFileSync, writeFileSync, mkdirSync, createWriteStream, openSync, closeSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, createWriteStream, openSync, closeSync } from "fs";
 import { timingSafeEqual } from "crypto";
 
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
@@ -21,6 +21,14 @@ const DB_PATH            = process.env.DB_PATH                        || "./brok
 const PRUNE_INTERVAL_MS  = Number(process.env.PRUNE_INTERVAL_MS)      || 5 * 60 * 1000;   // 5 min
 const PRUNE_MAX_AGE_MS   = Number(process.env.PRUNE_MAX_AGE_MS)       || 48 * 60 * 60 * 1000; // 48 h
 const PRUNE_EXEMPT       = (process.env.PRUNE_EXEMPT || "").split(",").map(s => s.trim()).filter(Boolean);
+// Compacting prune: "signal" message types (the audit trail) live longer than chatter.
+// Heartbeats/status/notes go at PRUNE_MAX_AGE_MS; tasks/results/questions at PRUNE_SIGNAL_MAX_AGE_MS.
+const PRUNE_SIGNAL_TYPES     = (process.env.PRUNE_SIGNAL_TYPES || "task,result,question,error,contract-change,contract-proposal").split(",").map(s => s.trim()).filter(Boolean);
+const PRUNE_SIGNAL_MAX_AGE_MS = Number(process.env.PRUNE_SIGNAL_MAX_AGE_MS) || 30 * 24 * 60 * 60 * 1000; // 30 d
+// On *-telemetry channels, a new row from a sender evicts that sender's older rows whose
+// state is transient (working/idle-polling). Session-end and idle-exit rows are kept so
+// cost history survives. Makes plain POST /messages heartbeats behave like upsert_heartbeat.
+const HEARTBEAT_TRANSIENT_STATES = (process.env.HEARTBEAT_TRANSIENT_STATES || "working,idle-polling").split(",").map(s => s.trim()).filter(Boolean);
 const TELEMETRY_CHANNEL  = process.env.TELEMETRY_CHANNEL              || "telemetry";
 const RATE_LIMIT_CHANNEL = process.env.RATE_LIMIT_CHANNEL             || "rate-limits";
 const WATCHDOG_BIN       = process.env.WATCHDOG_BIN                   || "";
@@ -70,11 +78,21 @@ function tokenMatches(token) {
 function loadWorkerDefs() {
   if (!WORKERS_CONFIG) return [];
   try {
-    return JSON.parse(readFileSync(WORKERS_CONFIG, "utf8"));
+    const defs = JSON.parse(readFileSync(WORKERS_CONFIG, "utf8"));
+    if (!Array.isArray(defs)) throw new Error("top-level value is not an array");
+    return defs.filter(d => d && typeof d.name === "string" && d.name);
   } catch (e) {
     console.warn(`[claude-broker] WORKERS_CONFIG load failed: ${e.message}`);
     return [];
   }
+}
+
+// Write WORKERS_CONFIG atomically (temp file + rename) so a crash mid-write
+// can never leave a truncated file that loadWorkerDefs would read as "no workers".
+function saveWorkerDefs(defs) {
+  const tmp = `${WORKERS_CONFIG}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(defs, null, 2) + "\n", "utf8");
+  renameSync(tmp, WORKERS_CONFIG);
 }
 
 if (WORKERS_CONFIG) {
@@ -121,7 +139,21 @@ try { db.exec("ALTER TABLE channel_schemas ADD COLUMN version TEXT DEFAULT NULL"
 
 // ── Prepared statements ───────────────────────────────────────────────────────
 
-const stmtInsert       = db.prepare("INSERT INTO messages (channel, sender, content, created_at) VALUES (?, ?, ?, ?)");
+const metrics = {
+  started_at: Date.now(),
+  messages_inserted: 0,
+  http: {},            // "METHOD /path" → count
+  tools: {},           // name → { calls, errors, total_ms, max_ms }
+  long_polls_active: 0,
+  long_polls_total: 0,
+  long_polls_woken: 0, // resolved by a message (vs timeout/abort)
+};
+function metricTool(name, ms, isError) {
+  const t = metrics.tools[name] || (metrics.tools[name] = { calls: 0, errors: 0, total_ms: 0, max_ms: 0 });
+  t.calls++; if (isError) t.errors++; t.total_ms += ms; if (ms > t.max_ms) t.max_ms = ms;
+}
+const stmtInsertRaw    = db.prepare("INSERT INTO messages (channel, sender, content, created_at) VALUES (?, ?, ?, ?)");
+const stmtInsert       = { run: (...a) => { metrics.messages_inserted++; return stmtInsertRaw.run(...a); } };
 const stmtSelect       = db.prepare("SELECT id, sender, content, created_at FROM messages WHERE channel = ? AND id > ? ORDER BY id ASC LIMIT ?");
 const stmtSelectFilter = db.prepare(`
   SELECT id, sender, content, created_at FROM messages
@@ -148,7 +180,40 @@ const stmtChans        = db.prepare("SELECT channel, COUNT(*) AS n, MAX(id) AS l
 const stmtChansByPrefix = db.prepare("SELECT DISTINCT channel FROM messages WHERE channel LIKE ? ORDER BY channel");
 const stmtPurge        = db.prepare("DELETE FROM messages WHERE channel = ?");
 const stmtPruneOlder   = db.prepare("DELETE FROM messages WHERE channel = ? AND created_at < ?");
-const stmtPruneAllOld  = db.prepare("DELETE FROM messages WHERE channel NOT IN (SELECT value FROM json_each(?)) AND created_at < ?");
+// Chatter (anything not a signal type, including non-JSON) at the short cutoff …
+const stmtPruneAllOld  = db.prepare(`
+  DELETE FROM messages WHERE channel NOT IN (SELECT value FROM json_each(?)) AND created_at < ?
+    AND NOT (json_valid(content) AND json_extract(content, '$.type') IN (SELECT value FROM json_each(?)))
+`);
+// … signal types at the long cutoff.
+const stmtPruneSignalOld = db.prepare(`
+  DELETE FROM messages WHERE channel NOT IN (SELECT value FROM json_each(?)) AND created_at < ?
+    AND json_valid(content) AND json_extract(content, '$.type') IN (SELECT value FROM json_each(?))
+`);
+const stmtDeleteTransientHeartbeats = db.prepare(`
+  DELETE FROM messages WHERE channel = ? AND sender = ? AND id != ?
+    AND json_valid(content)
+    AND COALESCE(json_extract(content, '$.activity.state'), json_extract(content, '$.state')) IN (SELECT value FROM json_each(?))
+`);
+const stmtQuestions = db.prepare(`
+  SELECT id, channel, sender, content, created_at FROM messages
+  WHERE channel LIKE ? AND json_valid(content) AND json_extract(content, '$.type') = 'question'
+  ORDER BY id ASC
+`);
+// A question is answered when something lands on the asker's inbox after it that names the
+// task_id, or when the asker itself posts a result for that task_id (self-resolved).
+const stmtQuestionReply = db.prepare(`
+  SELECT id, sender, created_at FROM messages
+  WHERE channel = ? AND id > ?
+    AND (json_extract(content, '$.task_id') = ? OR (? IS NOT NULL AND instr(content, ?) > 0))
+  ORDER BY id ASC LIMIT 1
+`);
+const stmtQuestionSelfResult = db.prepare(`
+  SELECT id FROM messages
+  WHERE channel LIKE ? AND id > ? AND sender = ?
+    AND json_valid(content) AND json_extract(content, '$.type') = 'result' AND json_extract(content, '$.task_id') = ?
+  LIMIT 1
+`);
 // summary must come from the newest result row (highest id), not a lexicographic MAX
 // over summary strings — a stale 'PASS — ...' would shadow a later 'FAIL — ...'.
 // SQLite guarantees bare columns resolve from the MAX(id) row when the query has a
@@ -208,7 +273,7 @@ const stmtSprintProgress = db.prepare(`
   SELECT
     COUNT(CASE WHEN json_valid(content) AND json_extract(content, '$.type') = 'result' THEN 1 END) AS completed,
     COUNT(CASE WHEN json_valid(content) AND json_extract(content, '$.type') = 'result'
-               AND json_extract(content, '$.summary') LIKE '%FAIL%' THEN 1 END) AS failed
+               AND json_extract(content, '$.summary') LIKE 'FAIL%' THEN 1 END) AS failed
   FROM messages WHERE channel = ?
 `);
 
@@ -234,6 +299,15 @@ function getBatchResultsStmt(n) {
   }
   return stmtBatchResultsCache.get(n);
 }
+const stmtChanViewRows = db.prepare(
+  "SELECT id, sender, content, created_at FROM messages WHERE channel = ? AND id > ? ORDER BY id DESC LIMIT ?"
+);
+const stmtChanCount = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE channel = ?");
+const stmtResultRowsSince = db.prepare(`
+  SELECT sender, content FROM messages
+  WHERE channel = ? AND id > ? AND json_valid(content) AND json_extract(content, '$.type') = 'result'
+  ORDER BY id ASC
+`);
 const stmtReadLast = db.prepare(
   "SELECT id, sender, content, created_at FROM messages WHERE channel = ? ORDER BY id DESC LIMIT ?"
 );
@@ -413,6 +487,71 @@ function spawnWatchdogTmux(def, { model } = {}) {
   return { pid };
 }
 
+// ── Worker lifecycle (shared by MCP tools and REST routes) ───────────────────
+// Both surfaces must agree on tmux vs subprocess mode — the dashboard buttons call
+// the REST routes, so a REST-only subprocess spawn in tmux mode would duplicate a
+// worker already running in a tmux window and never be stoppable.
+
+class WorkerError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+// Returns { pid, startedAt, tmux } if running, else null. Reconciles the in-memory map in tmux mode.
+function workerRunningInfo(name) {
+  if (WORKERS_TMUX_SESSION) {
+    if (!tmuxWindowExists(name)) { watchdogProcs.delete(name); return null; }
+    const entry = watchdogProcs.get(name);
+    return { pid: tmuxPanePid(name), startedAt: entry?.startedAt ?? null, tmux: true };
+  }
+  const entry = watchdogProcs.get(name);
+  return entry ? { pid: entry.pid, startedAt: entry.startedAt, tmux: false } : null;
+}
+
+// Returns { pid, tmux, already } — already=true means it was running and nothing was spawned.
+function startWorker(name, { model } = {}) {
+  if (!WATCHDOG_BIN) throw new WorkerError(503, "WATCHDOG_BIN not configured on broker — cannot start workers.");
+  const def = loadWorkerDefs().find(w => w.name === name);
+  if (!def) throw new WorkerError(404, `Worker "${name}" not found in config. Use list_workers to see available workers.`);
+  const running = workerRunningInfo(name);
+  if (running) return { pid: running.pid, tmux: running.tmux, already: true };
+  try {
+    if (WORKERS_TMUX_SESSION) {
+      const { pid } = spawnWatchdogTmux(def, { model });
+      return { pid, tmux: true, already: false };
+    }
+    const proc = spawnWatchdogProc(def, { model });
+    return { pid: proc.pid, tmux: false, already: false };
+  } catch (e) {
+    throw new WorkerError(500, `Failed to start "${name}": ${e.message}`);
+  }
+}
+
+// Returns { pid, tmux }. Throws WorkerError(404) if not running, (500) if the kill failed.
+function stopWorker(name) {
+  if (WORKERS_TMUX_SESSION) {
+    if (!tmuxWindowExists(name)) {
+      watchdogProcs.delete(name);
+      throw new WorkerError(404, `Worker "${name}" is not running (no tmux window found in ${WORKERS_TMUX_SESSION}).`);
+    }
+    const pid = tmuxPanePid(name);
+    const r = spawnSync(TMUX_BIN, ["kill-window", "-t", `${WORKERS_TMUX_SESSION}:${name}`], { encoding: "utf8" });
+    watchdogProcs.delete(name);
+    if (r.status !== 0) throw new WorkerError(500, `tmux kill-window failed: ${(r.stderr || "").trim() || "unknown error"}`);
+    console.log(`[claude-broker] stopped watchdog "${name}" via tmux kill-window`);
+    return { pid, tmux: true };
+  }
+  const entry = watchdogProcs.get(name);
+  if (!entry) throw new WorkerError(404, `Worker "${name}" is not running.`);
+  watchdogProcs.delete(name);
+  try {
+    process.kill(-entry.pid, "SIGTERM"); // kill entire process group (watchdog + in-flight claude)
+  } catch (e) {
+    throw new WorkerError(500, `kill failed: ${e.message}`);
+  }
+  console.log(`[claude-broker] stopped watchdog "${name}" (pid ${entry.pid})`);
+  return { pid: entry.pid, tmux: false };
+}
+
 // ── AJV schema validation ─────────────────────────────────────────────────────
 
 const ajv = new Ajv({ allErrors: true, strict: false });
@@ -436,7 +575,11 @@ function validateContent(channel, content) {
   if (!v) return { ok: true };
   let parsed;
   try { parsed = JSON.parse(content); }
-  catch (e) { return { ok: true }; } // Skip schema validation for non-JSON content
+  catch (e) {
+    // A channel with a schema expects JSON envelopes — plain text can never satisfy it.
+    // strict → reject, warn-only → warn + accept (same contract as a schema mismatch).
+    return { ok: false, strict: !!v.strict, errors: `content is not valid JSON (${e.message})` };
+  }
   if (v.validate(parsed)) return { ok: true };
   const errors = (v.validate.errors || []).map(e => `${e.instancePath || "/"} ${e.message}`).join("; ");
   return { ok: false, strict: !!v.strict, errors };
@@ -447,9 +590,26 @@ function validateContent(channel, content) {
 const messageBus = new EventEmitter();
 messageBus.setMaxListeners(0);
 
-function formatRows(rows, channel, sinceId) {
+// Compact view of a message for projection="summary": envelope headline fields only.
+// Lets an orchestrator scan 30 results in ~3 KB instead of ~150 KB, then open the ones it needs.
+function summarizeContent(content) {
+  const bytes = Buffer.byteLength(content, "utf8");
+  try {
+    const p = JSON.parse(content);
+    if (!p || typeof p !== "object") throw 0;
+    const out = { bytes };
+    for (const k of ["type", "task_id", "from", "to", "subject", "summary"]) if (p[k] != null) out[k] = p[k];
+    if (Array.isArray(p.depends_on) && p.depends_on.length) out.depends_on = p.depends_on;
+    if (Array.isArray(p.affected_files)) out.affected_files_count = p.affected_files.length;
+    return out;
+  } catch {
+    return { bytes, text: content.length > 120 ? content.slice(0, 120) + "…" : content };
+  }
+}
+
+function formatRows(rows, channel, sinceId, projection) {
   if (rows.length === 0) return { content: [{ type: "text", text: `No new messages on '${channel}' (since_id=${sinceId}).` }] };
-  const lines = rows.map(r => `[#${r.id}] ${new Date(r.created_at).toISOString()} <${r.sender}>: ${r.content}`);
+  const lines = rows.map(r => `[#${r.id}] ${new Date(r.created_at).toISOString()} <${r.sender}>: ${projection === "summary" ? JSON.stringify(summarizeContent(r.content)) : r.content}`);
   lines.push(`\n(next since_id: ${rows[rows.length - 1].id})`);
   return { content: [{ type: "text", text: lines.join("\n") }] };
 }
@@ -480,19 +640,40 @@ function fetchFeedRows(channels, signalOnly, limit) {
 // ── Background auto-pruning ───────────────────────────────────────────────────
 
 function runAutoPrune() {
-  const cutoff = Date.now() - PRUNE_MAX_AGE_MS;
+  const now = Date.now();
   const exemptJson = JSON.stringify(PRUNE_EXEMPT);
-  const r = stmtPruneAllOld.run(exemptJson, cutoff);
-  if (r.changes > 0) {
-    console.log(`[claude-broker] auto-pruned ${r.changes} msgs older than ${PRUNE_MAX_AGE_MS / 3600000}h (exempt: ${PRUNE_EXEMPT.join(", ") || "none"})`);
+  const signalJson = JSON.stringify(PRUNE_SIGNAL_TYPES);
+  const r1 = stmtPruneAllOld.run(exemptJson, now - PRUNE_MAX_AGE_MS, signalJson);
+  const r2 = stmtPruneSignalOld.run(exemptJson, now - PRUNE_SIGNAL_MAX_AGE_MS, signalJson);
+  if (r1.changes > 0 || r2.changes > 0) {
+    console.log(`[claude-broker] auto-pruned ${r1.changes} chatter msgs older than ${PRUNE_MAX_AGE_MS / 3600000}h and ${r2.changes} signal msgs older than ${Math.round(PRUNE_SIGNAL_MAX_AGE_MS / 86400000)}d (exempt: ${PRUNE_EXEMPT.join(", ") || "none"})`);
   }
+}
+
+// Evict a telemetry sender's older transient-state rows after a new row lands.
+function compactTelemetry(channel, sender, newId) {
+  if (!channel.endsWith("-telemetry") || HEARTBEAT_TRANSIENT_STATES.length === 0) return 0;
+  return stmtDeleteTransientHeartbeats.run(channel, sender, newId, JSON.stringify(HEARTBEAT_TRANSIENT_STATES)).changes;
 }
 setInterval(runAutoPrune, PRUNE_INTERVAL_MS).unref();
 
 // ── MCP server builder ────────────────────────────────────────────────────────
 
 function buildServer() {
-  const server = new McpServer({ name: "claude-broker", version: "2.0.0" });
+  const server = new McpServer({ name: "claude-broker", version: VERSION });
+
+  // Count calls / errors / latency per tool without touching each handler.
+  const registerToolRaw = server.registerTool.bind(server);
+  server.registerTool = (name, cfg, handler) => registerToolRaw(name, cfg, async (...args) => {
+    const t0 = Date.now();
+    let isError = false;
+    try {
+      const out = await handler(...args);
+      isError = !!out?.isError;
+      return out;
+    } catch (e) { isError = true; throw e; }
+    finally { metricTool(name, Date.now() - t0, isError); }
+  });
 
   // ── send_message ────────────────────────────────────────────────────────────
   server.registerTool("send_message", {
@@ -512,6 +693,7 @@ function buildServer() {
     }
     const now = Date.now();
     const r = stmtInsert.run(channel, sender, content, now);
+    compactTelemetry(channel, sender, r.lastInsertRowid);
     messageBus.emit(`msg:${channel}`, { id: r.lastInsertRowid, sender, content });
     const warn = (!check.ok && !check.strict) ? `  [WARN schema mismatch: ${check.errors}]` : "";
     return { content: [{ type: "text", text: `Sent #${r.lastInsertRowid} to '${channel}' as '${sender}' at ${new Date(now).toISOString()}.${warn}` }] };
@@ -527,16 +709,17 @@ function buildServer() {
       limit:         z.number().int().positive().max(500).optional().describe("Max messages (default 100)."),
       filter_sender: z.string().optional().describe("Only return messages from this sender."),
       filter_type:   z.string().optional().describe("Only return messages where JSON content has type === this value."),
+      projection:    z.enum(["full", "summary"]).optional().describe("'summary' returns only headline envelope fields (type, task_id, from, to, subject, summary, bytes) per message — scan first, then read_messages(full) or delete/act on the ids you need. Default 'full'."),
     },
-  }, async ({ channel, since_id, limit, filter_sender, filter_type }) => {
+  }, async ({ channel, since_id, limit, filter_sender, filter_type, projection }) => {
     const rows = fetchFiltered(channel, since_id ?? 0, limit ?? 100, filter_sender, filter_type);
-    return formatRows(rows, channel, since_id ?? 0);
+    return formatRows(rows, channel, since_id ?? 0, projection);
   });
 
   // ── wait_for_messages ───────────────────────────────────────────────────────
   server.registerTool("wait_for_messages", {
     title: "Wait for new messages",
-    description: "Long-polls until a matching message arrives or timeout_ms elapses. Supports filter_sender and filter_type — waits until a message matching the filters arrives, skipping non-matching ones. Default timeout 25s, max 300s.",
+    description: "Long-polls until a matching message arrives or timeout_ms elapses. Supports filter_sender and filter_type — waits until a message matching the filters arrives, skipping non-matching ones. Default timeout 60s, max 300s.",
     inputSchema: {
       channel:       z.string().min(1),
       since_id:      z.number().int().nonnegative().optional(),
@@ -559,11 +742,11 @@ function buildServer() {
       let timer = null;
       let resolved = false;
 
-      function cleanup() {
+      let cleanup = function () {
         if (timer) { clearTimeout(timer); timer = null; }
         messageBus.off(event, onMessage);
         signal?.removeEventListener("abort", onAbort);
-      }
+      };
 
       function settle(result) {
         if (resolved) return;
@@ -574,7 +757,7 @@ function buildServer() {
 
       function onMessage() {
         const rows = fetchFiltered(channel, sinceId, lim, filter_sender, filter_type);
-        if (rows.length > 0) settle(formatRows(rows, channel, sinceId));
+        if (rows.length > 0) { metrics.long_polls_woken++; settle(formatRows(rows, channel, sinceId)); }
         // Non-matching message — keep listener registered, timer keeps running
       }
 
@@ -593,6 +776,11 @@ function buildServer() {
       // Check for messages already present (including any that arrived before registration)
       const immediate = fetchFiltered(channel, sinceId, lim, filter_sender, filter_type);
       if (immediate.length > 0) { settle(formatRows(immediate, channel, sinceId)); return; }
+
+      metrics.long_polls_total++; metrics.long_polls_active++;
+      const dec = () => { metrics.long_polls_active--; };
+      const origCleanup = cleanup;
+      cleanup = () => { origCleanup(); dec(); };
 
       timer = setTimeout(() => {
         settle({ content: [{ type: "text", text: `No new messages on '${channel}' within ${timeout}ms (since_id=${sinceId}).` }] });
@@ -622,12 +810,14 @@ function buildServer() {
       channel:       z.string().min(1).describe("Channel to post to when all deps are satisfied."),
       sender:        z.string().min(1),
       content:       z.string().min(1).describe("Message body to post when unblocked."),
-      depends_on:    z.array(z.string().min(1)).min(1).describe("Array of task_ids to wait for. Each must have a type:result message on watch_channel."),
-      watch_channel: z.string().optional().describe("Channel to watch for result messages. Default: status."),
+      depends_on:    z.array(z.string().min(1)).min(1).describe("Array of task_ids to wait for (the envelope's 'task_id:worker' form is accepted; the worker suffix is ignored). Each must have a type:result message on watch_channel."),
+      watch_channel: z.string().optional().describe("Channel to watch for result messages. Default: <ns>-status derived from a namespaced channel (e.g. team-backend → team-status), else 'status'."),
       timeout_ms:    z.number().int().positive().max(300000).optional().describe("Max wait in ms. Default 60000. Max 300000."),
     },
   }, async ({ channel, sender, content, depends_on, watch_channel, timeout_ms }, extra) => {
-    const watchChan = watch_channel ?? "status";
+    const watchChan = watch_channel ?? (channel.includes("-") ? `${nsOf(channel)}-status` : "status");
+    // Envelope convention writes depends_on as "task_id:worker"; results are keyed by task_id alone.
+    depends_on = depends_on.map(d => (d.includes(":") ? d.slice(0, d.indexOf(":")) : d));
     const timeout   = Math.min(timeout_ms ?? 60000, 300000);
     const event     = `msg:${watchChan}`;
     // Same disconnect-cleanup contract as wait_for_messages.
@@ -723,7 +913,7 @@ function buildServer() {
   // ── check_results_batch ─────────────────────────────────────────────────────
   server.registerTool("check_results_batch", {
     title: "Batch-check task results",
-    description: "Check multiple task_ids for type:result messages in one call. Returns a map of task_id → found (boolean). Use at turn-start when multiple tasks may be queued — replaces N sequential check_result calls with one round-trip.",
+    description: "Check multiple task_ids for type:result messages in one call. Returns results (task_id → found boolean) and summaries (task_id → latest result summary or null). Use at turn-start when multiple tasks may be queued — replaces N sequential check_result calls with one round-trip.",
     inputSchema: {
       channel:  z.string().min(1).describe("Channel to check (typically status)."),
       task_ids: z.array(z.string().min(1)).min(1).max(50).describe("Task IDs to check."),
@@ -732,8 +922,13 @@ function buildServer() {
     const foundRows = getBatchResultsStmt(task_ids.length).all(channel, ...task_ids);
     const foundSet  = new Set(foundRows.map(r => r.task_id));
     const result    = {};
-    for (const task_id of task_ids) result[task_id] = foundSet.has(task_id);
-    return { content: [{ type: "text", text: JSON.stringify({ channel, results: result }) }] };
+    const summaries = {};
+    for (const task_id of task_ids) {
+      result[task_id] = foundSet.has(task_id);
+      // Latest summary so batch callers can tell PASS from FAIL without a second round-trip.
+      summaries[task_id] = result[task_id] ? (stmtCheckResult.get(channel, task_id).summary ?? null) : null;
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ channel, results: result, summaries }) }] };
   });
 
   // ── has_messages ────────────────────────────────────────────────────────────
@@ -756,12 +951,13 @@ function buildServer() {
     inputSchema: {
       channel: z.string().min(1).describe("Channel to read."),
       n:       z.number().int().min(1).max(100).default(20).describe("Number of most-recent messages to return."),
+      projection: z.enum(["full", "summary"]).optional().describe("'summary' returns headline envelope fields only. Default 'full'."),
     },
-  }, async ({ channel, n }) => {
+  }, async ({ channel, n, projection }) => {
     const rows = stmtReadLast.all(channel, n ?? 20);
     rows.reverse();
     if (!rows.length) return { content: [{ type: "text", text: "No messages." }] };
-    const text = rows.map(r => `[${r.id}] ${r.sender}: ${r.content}`).join("\n");
+    const text = rows.map(r => `[${r.id}] ${r.sender}: ${projection === "summary" ? JSON.stringify(summarizeContent(r.content)) : r.content}`).join("\n");
     return { content: [{ type: "text", text: text }] };
   });
 
@@ -780,12 +976,16 @@ function buildServer() {
   // ── purge_channel ───────────────────────────────────────────────────────────
   server.registerTool("purge_channel", {
     title: "Purge channel",
-    description: "Delete messages from a channel. Without older_than_ms, deletes all messages. With older_than_ms, deletes only messages older than that many milliseconds.",
+    description: "Delete messages from a channel. Without older_than_ms, deletes all messages. With older_than_ms, deletes only messages older than that many milliseconds. Channels in PRUNE_EXEMPT are refused unless force=true.",
     inputSchema: {
       channel:       z.string().min(1),
       older_than_ms: z.number().int().positive().optional().describe("If set, only delete messages older than this many ms. Omit to delete all."),
+      force:         z.boolean().optional().describe("Required to purge a channel listed in PRUNE_EXEMPT (e.g. *-backlog). Default false."),
     },
-  }, async ({ channel, older_than_ms }) => {
+  }, async ({ channel, older_than_ms, force }) => {
+    if (PRUNE_EXEMPT.includes(channel) && !force) {
+      return { content: [{ type: "text", text: `Refused: '${channel}' is in PRUNE_EXEMPT. Pass force=true to purge it anyway.` }], isError: true };
+    }
     let r;
     if (older_than_ms != null) {
       r = stmtPruneOlder.run(channel, Date.now() - older_than_ms);
@@ -898,7 +1098,7 @@ function buildServer() {
   }, async ({ channel = TELEMETRY_CHANNEL }) => {
     const rows = stmtLatestPerSender.all(channel);
     const nowMs = Date.now();
-    const STALE_MS = 5 * 60 * 1000;
+    const STALE_MS = WORKER_OFFLINE_THRESHOLD_S * 1000; // same threshold the dashboard uses
 
     const workers = rows.map(row => {
       let hb = {};
@@ -934,8 +1134,8 @@ function buildServer() {
     inputSchema: {
       channel: z.string().min(1),
       schema:  z.string().min(2).describe("JSON Schema as a JSON-encoded string."),
-      strict:  z.boolean().optional().describe("If true, invalid messages are rejected. Default false (warn-only)."),
-      version: z.string().optional().describe("Optional schema version string, e.g. '1.0'."),
+      strict:  z.boolean().optional().describe("If true, invalid messages are rejected. Omit to keep the channel's current mode (warn-only for a new channel) — re-registering a schema never silently downgrades a strict channel."),
+      version: z.string().optional().describe("Optional schema version string, e.g. '1.0'. Omit to keep the current version."),
     },
   }, async ({ channel, schema, strict, version }) => {
     let parsed;
@@ -944,9 +1144,13 @@ function buildServer() {
     try { ajv.compile(parsed); }
     catch (e) { return { content: [{ type: "text", text: `schema does not compile as JSON Schema: ${e.message}` }], isError: true }; }
     const now = Date.now();
-    stmtSchemaUpsert.run(channel, schema, strict ? 1 : 0, now, version ?? null);
+    const existing  = stmtSchemaGet.get(channel);
+    const strictVal = strict === undefined ? (existing ? existing.strict : 0) : (strict ? 1 : 0);
+    const versionVal = version ?? existing?.version ?? null;
+    stmtSchemaUpsert.run(channel, schema, strictVal, now, versionVal);
     validatorCache.delete(channel);
-    return { content: [{ type: "text", text: `Registered schema for '${channel}' (strict=${strict ? "on" : "off"}${version ? `, version=${version}` : ""}) at ${new Date(now).toISOString()}.` }] };
+    const kept = strict === undefined && existing ? " (strict mode preserved)" : "";
+    return { content: [{ type: "text", text: `Registered schema for '${channel}' (strict=${strictVal ? "on" : "off"}${versionVal ? `, version=${versionVal}` : ""})${kept} at ${new Date(now).toISOString()}.` }] };
   });
 
   // ── get_channel_schema ──────────────────────────────────────────────────────
@@ -999,23 +1203,11 @@ function buildServer() {
     const defs = loadWorkerDefs();
     if (!defs.length) return { content: [{ type: "text", text: "(no workers configured — set WORKERS_CONFIG)" }] };
     const lines = defs.map(w => {
-      let state;
-      if (WORKERS_TMUX_SESSION) {
-        const exists = tmuxWindowExists(w.name);
-        if (exists) {
-          const pid = tmuxPanePid(w.name);
-          const entry = watchdogProcs.get(w.name);
-          const uptime = entry ? `${Math.floor((Date.now() - entry.startedAt) / 1000)}s` : "?";
-          state = `running  pid=${pid ?? "?"}  uptime=${uptime}  tmux=${WORKERS_TMUX_SESSION}:${w.name}`;
-        } else {
-          watchdogProcs.delete(w.name);
-          state = "stopped";
-        }
-      } else {
-        const entry = watchdogProcs.get(w.name);
-        state = entry
-          ? `running  pid=${entry.pid}  uptime=${Math.floor((Date.now() - entry.startedAt) / 1000)}s`
-          : "stopped";
+      const info = workerRunningInfo(w.name);
+      let state = "stopped";
+      if (info) {
+        const uptime = info.startedAt ? `${Math.floor((Date.now() - info.startedAt) / 1000)}s` : "?";
+        state = `running  pid=${info.pid ?? "?"}  uptime=${uptime}${info.tmux ? `  tmux=${WORKERS_TMUX_SESSION}:${w.name}` : ""}`;
       }
       return `${w.name}\t${state}${w.model ? `\tmodel=${w.model}` : ""}`;
     });
@@ -1031,36 +1223,18 @@ function buildServer() {
       model: z.string().min(1).optional().describe("Claude model ID to use for this session, e.g. 'claude-opus-4-7'. Overrides the worker's configured model and the CLAUDE_MODEL env var. Omit to use the worker's \"model\" field from WORKERS_CONFIG, falling back to CLAUDE_MODEL (default claude-haiku-4-5-20251001)."),
     },
   }, async ({ name, model }) => {
-    if (!WATCHDOG_BIN)
-      return { content: [{ type: "text", text: "WATCHDOG_BIN not configured on broker — cannot start workers." }], isError: true };
-    const defs = loadWorkerDefs();
-    const def = defs.find(w => w.name === name);
-    if (!def)
-      return { content: [{ type: "text", text: `Worker "${name}" not found in config. Use list_workers to see available workers.` }], isError: true };
-    if (WORKERS_TMUX_SESSION) {
-      if (tmuxWindowExists(name)) {
-        const pid = tmuxPanePid(name);
-        return { content: [{ type: "text", text: `Worker "${name}" already running in tmux ${WORKERS_TMUX_SESSION}:${name} (pid ${pid ?? "?"}).` }] };
-      }
-      try {
-        const { pid } = spawnWatchdogTmux(def, { model });
-        const modelNote = model ? ` [model: ${model}]` : "";
-        return { content: [{ type: "text", text: `Started "${name}" in tmux session "${WORKERS_TMUX_SESSION}" window "${name}" (pid ${pid ?? "?"})${modelNote}.` }] };
-      } catch (e) {
-        return { content: [{ type: "text", text: `Failed to start "${name}" in tmux: ${e.message}` }], isError: true };
-      }
+    let r;
+    try { r = startWorker(name, { model }); }
+    catch (e) { return { content: [{ type: "text", text: e.message }], isError: true }; }
+    if (r.already) {
+      const where = r.tmux ? ` in tmux ${WORKERS_TMUX_SESSION}:${name}` : "";
+      return { content: [{ type: "text", text: `Worker "${name}" already running${where} (pid ${r.pid ?? "?"}).` }] };
     }
-    if (watchdogProcs.has(name)) {
-      const pid = watchdogProcs.get(name).pid;
-      return { content: [{ type: "text", text: `Worker "${name}" already running (pid ${pid}).` }] };
-    }
-    try {
-      const proc = spawnWatchdogProc(def, { model });
-      const modelNote = model ? ` [model: ${model}]` : "";
-      return { content: [{ type: "text", text: `Started "${name}" (pid ${proc.pid})${modelNote}. Logs: ${WORKERS_LOG_DIR}/${name}.{out,err}.log` }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Failed to start "${name}": ${e.message}` }], isError: true };
-    }
+    const modelNote = model ? ` [model: ${model}]` : "";
+    const text = r.tmux
+      ? `Started "${name}" in tmux session "${WORKERS_TMUX_SESSION}" window "${name}" (pid ${r.pid ?? "?"})${modelNote}.`
+      : `Started "${name}" (pid ${r.pid})${modelNote}. Logs: ${WORKERS_LOG_DIR}/${name}.{out,err}.log`;
+    return { content: [{ type: "text", text }] };
   });
 
   // ── turn_start ───────────────────────────────────────────────────────────────
@@ -1073,8 +1247,9 @@ function buildServer() {
       inbox_since_id:   z.number().int().nonnegative().default(0).describe("Return inbox messages with id > this. Default 0."),
       control_since_id: z.number().int().nonnegative().default(0).describe("Return control messages with id > this. Default 0."),
       limit:            z.number().int().positive().max(500).optional().describe("Max messages per channel. Default 100."),
+      projection:       z.enum(["full", "summary"]).optional().describe("'summary' replaces each message's content with headline envelope fields (type, task_id, subject, summary, bytes). Default 'full'."),
     },
-  }, async ({ inbox_channel, control_channel, inbox_since_id, control_since_id, limit }) => {
+  }, async ({ inbox_channel, control_channel, inbox_since_id, control_since_id, limit, projection }) => {
     const lim         = limit ?? 100;
     const inboxRows   = fetchFiltered(inbox_channel,   inbox_since_id   ?? 0, lim, null, null);
     const controlRows = fetchFiltered(control_channel, control_since_id ?? 0, lim, null, null);
@@ -1083,7 +1258,8 @@ function buildServer() {
       try { return JSON.parse(r.content).type === "rotate"; } catch { return false; }
     });
 
-    const toMsgObj = r => ({ id: r.id, sender: r.sender, content: r.content, ts: new Date(r.created_at).toISOString() });
+    const toMsgObj = r => ({ id: r.id, sender: r.sender, ts: new Date(r.created_at).toISOString(),
+      ...(projection === "summary" ? { summary: summarizeContent(r.content) } : { content: r.content }) });
 
     return { content: [{ type: "text", text: JSON.stringify({
       inbox:            inboxRows.map(toMsgObj),
@@ -1110,11 +1286,14 @@ function buildServer() {
     const results = [];
 
     // Validate all first; abort before any inserts if a strict schema fails
-    for (const msg of messages) {
+    const warns = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
       const check = validateContent(msg.channel, msg.content);
       if (!check.ok && check.strict) {
-        return { content: [{ type: "text", text: `schema validation failed on '${msg.channel}': ${check.errors}` }], isError: true };
+        return { content: [{ type: "text", text: `schema validation failed on '${msg.channel}' (message ${i + 1}/${messages.length}): ${check.errors}` }], isError: true };
       }
+      if (!check.ok) warns.push(`message ${i + 1} → '${msg.channel}': ${check.errors}`);
     }
 
     db.transaction((msgs) => {
@@ -1129,7 +1308,8 @@ function buildServer() {
     }
 
     const summary = results.map(r => `#${r.id} → ${r.channel}`).join(", ");
-    return { content: [{ type: "text", text: `Sent ${results.length} messages: ${summary}` }] };
+    const warnText = warns.length ? `  [WARN schema mismatch: ${warns.join("; ")}]` : "";
+    return { content: [{ type: "text", text: `Sent ${results.length} messages: ${summary}${warnText}` }] };
   });
 
   // ── upsert_heartbeat ─────────────────────────────────────────────────────────
@@ -1157,6 +1337,42 @@ function buildServer() {
     messageBus.emit(`msg:${channel}`, { id, sender, content });
     const warn = (!check.ok && !check.strict) ? `  [WARN schema mismatch: ${check.errors}]` : "";
     return { content: [{ type: "text", text: `Heartbeat #${id} posted for '${sender}' on '${channel}' at ${new Date(now).toISOString()}.${warn}` }] };
+  });
+
+  // ── open_questions ───────────────────────────────────────────────────────────
+  // Production data (2026-09-05): 4 of 6 type:question messages never received a reply
+  // and nothing surfaced it. This lists questions with no answer on the asker's inbox.
+  server.registerTool("open_questions", {
+    title: "List unanswered questions in a namespace",
+    description: "Scans every channel under prefix (e.g. 'team-') for type:question messages and returns those with no later message on the asker's inbox (<prefix><from>) that references the question's task_id, and no self-posted result for it. Use at orchestrator turn-start so blocked workers are never left waiting.",
+    inputSchema: {
+      prefix:      z.string().min(1).describe("Namespace prefix including the dash, e.g. 'team-' or 'cb-'."),
+      max_age_ms:  z.number().int().positive().optional().describe("Ignore questions older than this. Default: no limit."),
+    },
+  }, async ({ prefix, max_age_ms }) => {
+    const now  = Date.now();
+    const rows = stmtQuestions.all(`${prefix}%`);
+    const open = [];
+    let answered = 0;
+    for (const r of rows) {
+      if (max_age_ms && now - r.created_at > max_age_ms) continue;
+      let q = {};
+      try { q = JSON.parse(r.content); } catch { continue; }
+      const asker  = typeof q.from === "string" && q.from ? q.from : r.sender;
+      const taskId = typeof q.task_id === "string" && q.task_id ? q.task_id : null;
+      const inbox  = `${prefix}${asker}`;
+      const reply  = stmtQuestionReply.get(inbox, r.id, taskId, taskId, taskId);
+      const self   = taskId ? stmtQuestionSelfResult.get(`${prefix}%`, r.id, r.sender, taskId) : null;
+      if (reply || self) { answered++; continue; }
+      open.push({
+        id: r.id, channel: r.channel, from: asker, to: q.to ?? null, task_id: taskId,
+        subject: typeof q.subject === "string" ? q.subject : null,
+        asked_at: new Date(r.created_at).toISOString(),
+        age_min: Math.round((now - r.created_at) / 60000),
+        expected_reply_channel: inbox,
+      });
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ prefix, open, open_count: open.length, answered_count: answered }) }] };
   });
 
   // ── sprint_summary ───────────────────────────────────────────────────────────
@@ -1208,14 +1424,7 @@ function buildServer() {
       since_id: z.number().int().min(0).optional().describe("Only consider results with id > since_id. Omit to scan all messages on the channel (full sprint scan)."),
     },
   }, async ({ status_channel, since_id = 0 }) => {
-    const rows = db.prepare(`
-      SELECT sender, content FROM messages
-      WHERE channel = ?
-        AND id > ?
-        AND json_valid(content)
-        AND json_extract(content, '$.type') = 'result'
-      ORDER BY id ASC
-    `).all(status_channel, since_id);
+    const rows = stmtResultRowsSince.all(status_channel, since_id);
 
     // file → [{worker, task_id}]
     const fileMap = new Map();
@@ -1278,34 +1487,13 @@ function buildServer() {
       name: z.string().min(1).describe("Worker name as defined in WORKERS_CONFIG, e.g. 'backend', 'platform-orch'."),
     },
   }, async ({ name }) => {
-    if (WORKERS_TMUX_SESSION) {
-      if (!tmuxWindowExists(name)) {
-        watchdogProcs.delete(name);
-        return { content: [{ type: "text", text: `Worker "${name}" is not running (no tmux window found in ${WORKERS_TMUX_SESSION}).` }], isError: true };
-      }
-      try {
-        const r = spawnSync(TMUX_BIN, ["kill-window", "-t", `${WORKERS_TMUX_SESSION}:${name}`], { encoding: "utf8" });
-        if (r.status !== 0) throw new Error((r.stderr || "").trim() || "tmux kill-window failed");
-        watchdogProcs.delete(name);
-        console.log(`[claude-broker] stopped watchdog "${name}" via tmux kill-window`);
-        return { content: [{ type: "text", text: `Stopped "${name}" (killed tmux window ${WORKERS_TMUX_SESSION}:${name}).` }] };
-      } catch (e) {
-        watchdogProcs.delete(name);
-        return { content: [{ type: "text", text: `tmux kill-window failed: ${e.message}` }], isError: true };
-      }
-    }
-    const entry = watchdogProcs.get(name);
-    if (!entry)
-      return { content: [{ type: "text", text: `Worker "${name}" is not running.` }], isError: true };
-    try {
-      process.kill(-entry.pid, "SIGTERM");
-      watchdogProcs.delete(name);
-      console.log(`[claude-broker] stopped watchdog "${name}" via MCP (pid ${entry.pid})`);
-      return { content: [{ type: "text", text: `Stopped "${name}" (pid ${entry.pid}).` }] };
-    } catch (e) {
-      watchdogProcs.delete(name);
-      return { content: [{ type: "text", text: `kill failed: ${e.message}` }], isError: true };
-    }
+    let r;
+    try { r = stopWorker(name); }
+    catch (e) { return { content: [{ type: "text", text: e.message }], isError: true }; }
+    const text = r.tmux
+      ? `Stopped "${name}" (killed tmux window ${WORKERS_TMUX_SESSION}:${name}).`
+      : `Stopped "${name}" (pid ${r.pid}).`;
+    return { content: [{ type: "text", text }] };
   });
 
   // ── register_worker ──────────────────────────────────────────────────────────
@@ -1335,7 +1523,7 @@ function buildServer() {
         defs.push(entry);
       }
 
-      writeFileSync(WORKERS_CONFIG, JSON.stringify(defs, null, 2) + "\n", "utf8");
+      saveWorkerDefs(defs);
       console.log(`[claude-broker] registered worker "${name}" in WORKERS_CONFIG`);
       return { content: [{ type: "text", text: JSON.stringify({ registered: { name, ns, args: entry.args } }, null, 2) }] };
     } catch (e) {
@@ -1355,8 +1543,7 @@ function buildServer() {
       return { content: [{ type: "text", text: "Error: WORKERS_CONFIG env var not set" }], isError: true };
 
     // Check if worker is running
-    const isRunning = WORKERS_TMUX_SESSION ? tmuxWindowExists(name) : watchdogProcs.has(name);
-    if (isRunning)
+    if (workerRunningInfo(name))
       return { content: [{ type: "text", text: `Error: worker "${name}" is currently running — stop it first` }], isError: true };
 
     try {
@@ -1367,7 +1554,7 @@ function buildServer() {
         return { content: [{ type: "text", text: `Error: worker "${name}" not found in WORKERS_CONFIG` }], isError: true };
 
       defs.splice(idx, 1);
-      writeFileSync(WORKERS_CONFIG, JSON.stringify(defs, null, 2) + "\n", "utf8");
+      saveWorkerDefs(defs);
       console.log(`[claude-broker] deregistered worker "${name}" from WORKERS_CONFIG`);
       return { content: [{ type: "text", text: `Deregistered worker "${name}" from WORKERS_CONFIG.` }] };
     } catch (e) {
@@ -1401,17 +1588,65 @@ function dashboardAuth(req, res, next) {
 }
 app.use(express.json({ limit: "1mb" }));
 
+// Per-route hit counter (path only — no query strings, so tokens never land in metrics).
+app.use((req, _res, next) => {
+  const key = `${req.method} ${req.path.replace(/^\/workers\/[^/]+\//, "/workers/:name/")}`;
+  metrics.http[key] = (metrics.http[key] || 0) + 1;
+  next();
+});
+
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now(), uptime_s: Math.floor((Date.now() - startedAt) / 1000) }));
+
+// In-memory counters since process start. Answers "which tools are actually used, how often
+// do long-polls wake vs time out, what's slow" without guessing.
+app.get("/metrics", auth, (_req, res) => {
+  const tools = Object.fromEntries(Object.entries(metrics.tools).map(([k, v]) => [k, { ...v, avg_ms: v.calls ? Math.round(v.total_ms / v.calls) : 0 }]));
+  const db_rows = stmtChans.all().reduce((s, r) => s + r.n, 0);
+  res.json({
+    uptime_s: Math.floor((Date.now() - metrics.started_at) / 1000),
+    messages_inserted: metrics.messages_inserted,
+    db_rows,
+    long_polls: { active: metrics.long_polls_active, total: metrics.long_polls_total, woken: metrics.long_polls_woken },
+    tools,
+    http: metrics.http,
+  });
+});
 
 // Lightweight inbox pre-check — no Claude session needed.
 // Returns {pending, count, max_id} so watchdog can avoid starting Claude when idle.
+// Optional wait_ms (max 60000): long-poll — respond as soon as a message lands on the channel
+// instead of making the watchdog sleep-and-retry. Response shape is identical.
 app.get("/inbox", auth, (req, res) => {
   const { channel, since_id = "0" } = req.query;
-  if (!channel) return res.status(400).json({ error: "channel required" });
+  if (!channel || typeof channel !== "string") return res.status(400).json({ error: "channel required" });
   const sinceId = parseInt(since_id, 10);
   if (isNaN(sinceId)) return res.status(400).json({ error: "since_id must be numeric" });
-  const row = stmtHasMessages.get(channel, sinceId);
-  res.json({ channel, since_id: sinceId, pending: row.n > 0, count: row.n, max_id: row.max_id });
+  const waitMs = Math.min(Math.max(parseInt(req.query.wait_ms, 10) || 0, 0), 60000);
+  const reply = () => {
+    const row = stmtHasMessages.get(channel, sinceId);
+    return { channel, since_id: sinceId, pending: row.n > 0, count: row.n, max_id: row.max_id };
+  };
+  const first = reply();
+  if (first.pending || waitMs === 0) return res.json(first);
+
+  req.socket.setTimeout(0);
+  const event = `msg:${channel}`;
+  let done = false;
+  let timer = null;
+  const finish = (woken) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    messageBus.off(event, onMsg);
+    metrics.long_polls_active--;
+    if (woken) metrics.long_polls_woken++;
+    if (!res.writableEnded && !res.destroyed) res.json(reply());
+  };
+  const onMsg = () => { if (stmtHasMessages.get(channel, sinceId).n > 0) finish(true); };
+  metrics.long_polls_total++; metrics.long_polls_active++;
+  messageBus.on(event, onMsg);
+  res.on("close", () => finish(false));
+  timer = setTimeout(() => finish(false), waitMs);
 });
 
 // Batch inbox pre-check — single round-trip for N channels.
@@ -1451,6 +1686,7 @@ app.post("/messages", auth, (req, res) => {
     console.warn(`[claude-broker] WARN schema mismatch on '${channel}' (POST /messages): ${check.errors}`);
   }
   const row = stmtInsert.run(channel, sender, contentStr, Date.now());
+  compactTelemetry(channel, sender, row.lastInsertRowid);
   messageBus.emit(`msg:${channel}`, { id: row.lastInsertRowid, channel, sender, content: contentStr });
   const out = { id: row.lastInsertRowid, channel, sender };
   if (!check.ok && !check.strict) out.warn = `schema mismatch: ${check.errors}`;
@@ -1460,46 +1696,42 @@ app.post("/messages", auth, (req, res) => {
 // ── Worker control endpoints ───────────────────────────────────────────────────
 
 app.get("/workers", auth, (_req, res) => {
-  res.json(loadWorkerDefs().map(w => ({
-    name:      w.name,
-    ns:        w.ns   || null,
-    args:      w.args || [],
-    model:     w.model || null,
-    running:   watchdogProcs.has(w.name),
-    pid:       watchdogProcs.get(w.name)?.pid    ?? null,
-    startedAt: watchdogProcs.get(w.name)?.startedAt ?? null,
-  })));
+  res.json(loadWorkerDefs().map(w => {
+    const info = workerRunningInfo(w.name);
+    return {
+      name:      w.name,
+      ns:        w.ns   || null,
+      args:      w.args || [],
+      model:     w.model || null,
+      running:   !!info,
+      pid:       info?.pid       ?? null,
+      startedAt: info?.startedAt ?? null,
+      ...(info?.tmux && { tmux: `${WORKERS_TMUX_SESSION}:${w.name}` }),
+    };
+  }));
 });
 
 app.post("/workers/:name/start", auth, (req, res) => {
   const { name } = req.params;
   const model = typeof req.body?.model === "string" && req.body.model.trim() ? req.body.model.trim() : undefined;
-  const def = loadWorkerDefs().find(w => w.name === name);
-  if (!def)                    return res.status(404).json({ error: `Worker "${name}" not in config` });
-  if (watchdogProcs.has(name)) return res.status(409).json({ error: `Worker "${name}" already running (pid ${watchdogProcs.get(name).pid})` });
-  if (!WATCHDOG_BIN)           return res.status(503).json({ error: "WATCHDOG_BIN not configured" });
-
+  // Unknown worker → 404 before the WATCHDOG_BIN 503 check: a missing binary means nothing can start regardless.
+  if (!loadWorkerDefs().some(w => w.name === name)) return res.status(404).json({ error: `Worker "${name}" not in config` });
   try {
-    const proc = spawnWatchdogProc(def, { model });
-    res.json({ ok: true, name, pid: proc.pid, ...(model && { model }) });
+    const r = startWorker(name, { model });
+    if (r.already) return res.status(409).json({ error: `Worker "${name}" already running (pid ${r.pid ?? "?"})` });
+    res.json({ ok: true, name, pid: r.pid, ...(r.tmux && { tmux: `${WORKERS_TMUX_SESSION}:${name}` }), ...(model && { model }) });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
 app.post("/workers/:name/stop", auth, (req, res) => {
   const { name } = req.params;
-  const entry = watchdogProcs.get(name);
-  if (!entry) return res.status(404).json({ error: `Worker "${name}" not running` });
-
   try {
-    process.kill(-entry.pid, "SIGTERM"); // kill entire process group (watchdog + in-flight claude)
-    watchdogProcs.delete(name);
-    console.log(`[claude-broker] stopped watchdog "${name}" (pid ${entry.pid})`);
-    res.json({ ok: true, name, pid: entry.pid });
+    const r = stopWorker(name);
+    res.json({ ok: true, name, pid: r.pid });
   } catch (e) {
-    watchdogProcs.delete(name);
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -1573,6 +1805,10 @@ function agoStr(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s/60)}m ago` : `${Math.floor(s/3600)}h ago`;
 }
+// Namespace query params are interpolated into HTML and hrefs — allow only [A-Za-z0-9_.-].
+function safeNs(v) {
+  return typeof v === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(v) ? v : "all";
+}
 function escHtml(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
@@ -1593,7 +1829,8 @@ app.get("/dashboard", dashboardAuth, (req, res) => {
   allCaps.forEach(r => { try { JSON.parse(r.channels).forEach(c => nsSet.add(nsOf(c))); } catch {} });
   const namespaces = [...nsSet].sort();
 
-  const selectedNs = req.query.ns || "all";
+  // ns is reflected into the page; restrict to the charset namespaces actually use.
+  const selectedNs = safeNs(req.query.ns);
   const isAll      = selectedNs === "all";
   const live       = req.query.live === "1";
   const tokenParam = req.query.token ? `token=${encodeURIComponent(req.query.token)}` : "";
@@ -1849,7 +2086,7 @@ app.get("/dashboard", dashboardAuth, (req, res) => {
   const tabs = ["all", ...namespaces].map(ns => {
     const active = ns === selectedNs;
     const count  = ns === "all" ? allChannels.length : allChannels.filter(r => nsOf(r.channel) === ns).length;
-    return `<a href="${tabHref(ns, live)}" class="tab${active ? " tab-active" : ""}">${ns === "all" ? "All" : ns} <span class="tab-count">${count}</span></a>`;
+    return `<a href="${escHtml(tabHref(ns, live))}" class="tab${active ? " tab-active" : ""}">${ns === "all" ? "All" : escHtml(ns)} <span class="tab-count">${count}</span></a>`;
   }).join("\n");
 
   // ── Channel rows (with preview) ───────────────────────────────────────────────
@@ -2078,7 +2315,7 @@ ${sprintInfos.length > 0 ? `
 ${sprintInfos.map(s => {
   const open   = Math.max(0, s.dispatched - s.completed);
   const pct    = s.dispatched > 0 ? Math.round((s.completed / s.dispatched) * 100) : 0;
-  const nsTag  = isAll ? `<span style="font-size:10px;color:#8b949e;font-weight:normal;margin-left:6px">${s.ns}</span>` : "";
+  const nsTag  = isAll ? `<span style="font-size:10px;color:#8b949e;font-weight:normal;margin-left:6px">${escHtml(s.ns)}</span>` : "";
   return `<div class="sprint-card">
   <div class="sprint-name">${escHtml(s.slug)}${nsTag}</div>
   <div class="sprint-meta">started ${agoStr(s.startedAt)}</div>
@@ -2159,10 +2396,12 @@ function workerAction(name, action) {
 
 // Channel message viewer
 app.get("/dashboard/channel", dashboardAuth, (req, res) => {
-  const channel = req.query.name;
-  const backNs  = req.query.ns || "all";
-  const limit   = Math.min(parseInt(req.query.limit || "50", 10), 200);
-  const since   = req.query.since_id ? parseInt(req.query.since_id, 10) : 0;
+  const channel = typeof req.query.name === "string" ? req.query.name : "";
+  const backNs  = safeNs(req.query.ns);
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit   = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
+  const sinceRaw = parseInt(req.query.since_id, 10);
+  const since   = Number.isFinite(sinceRaw) && sinceRaw >= 0 ? sinceRaw : 0;
 
   if (!channel) return res.status(400).send("channel required");
 
@@ -2171,12 +2410,9 @@ app.get("/dashboard/channel", dashboardAuth, (req, res) => {
     ? `/dashboard${tokenParam ? "?" + tokenParam : ""}`
     : `/dashboard?ns=${backNs}${tokenParam ? "&" + tokenParam : ""}`;
 
-  const rows = db.prepare(
-    `SELECT id, sender, content, created_at FROM messages WHERE channel = ? AND id > ? ORDER BY id DESC LIMIT ?`
-  ).all(channel, since, limit);
-
-  const schemaRow = db.prepare("SELECT strict, version FROM channel_schemas WHERE channel = ?").get(channel);
-  const totalRow  = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE channel = ?").get(channel);
+  const rows      = stmtChanViewRows.all(channel, since, limit);
+  const schemaRow = stmtSchemaGet.get(channel);
+  const totalRow  = stmtChanCount.get(channel);
 
   const msgRows = rows.map(r => {
     let parsed = null;
@@ -2270,12 +2506,7 @@ ${olderHref ? `<div class="pager"><a href="${escHtml(olderHref)}">← older mess
 
 // Auth middleware
 if (SHARED_SECRET) {
-  app.use("/mcp", (req, res, next) => {
-    if (!secretMatches(req.headers.authorization)) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    next();
-  });
+  app.use("/mcp", auth);
 } else {
   console.warn("[claude-broker] WARNING: SHARED_SECRET is not set — broker is UNAUTHENTICATED (BROKER_ALLOW_NO_AUTH=1). Do not expose to any untrusted network.");
 }
@@ -2318,7 +2549,11 @@ function shutdown(signal) {
     process.exit(0);
   });
   // Force-exit if connections don't drain in time.
-  setTimeout(() => { console.warn("[claude-broker] forced exit after timeout"); process.exit(1); }, 10000).unref();
+  setTimeout(() => {
+    console.warn("[claude-broker] forced exit after timeout");
+    try { db.pragma("wal_checkpoint(TRUNCATE)"); db.close(); } catch { /* best effort */ }
+    process.exit(1);
+  }, 10000).unref();
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT",  () => shutdown("SIGINT"));
