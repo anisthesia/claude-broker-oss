@@ -34,6 +34,7 @@ const SUITES = [
   "test-schema-validation.js",
   "test-heartbeat.js",
   "test-heartbeat-pipeline.js",
+  "test-watchdog-launch.js",
   "test-protocol-ops.js",
   "test-git-protocol.js",
 ];

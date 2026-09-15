@@ -5,6 +5,24 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Fixed
+- **Headless workers now always reach the broker that started them.** `watchdog.sh` launches every
+  session with `--mcp-config <mode-600 temp file>` naming one `broker` server at `BROKER_URL/mcp`
+  with the injected token (plus `--strict-mcp-config` when the CLI supports it). Before, a worker
+  only had broker tools if its checkout carried a `.mcp.json` (worktrees never do) or the machine
+  had a user-scope registration — which could point at a different broker entirely. Found by a
+  fresh-install trial; `WATCHDOG_MCP=0` restores the old behaviour.
+- The wizard's non-interactive mode (`--yes`) now writes `.mcp.json` and the scope-guard hooks by
+  default (`--no-mcp-settings` / `--no-hooks` opt out); a `--yes` run used to skip both silently.
+
+### Added
+- `claude-broker-setup` bin, so a package install can run the wizard with `npx claude-broker-setup`;
+  the wizard prints `npx claude-broker` / `npx claude-broker-setup` when it runs from `node_modules`.
+- `watchdog.sh --once` (run one session, then exit) and `WATCHDOG_JITTER_MAX` (start-up jitter
+  ceiling), used by the new `test-watchdog-launch.js`, which runs the real watchdog against a fake
+  `claude` and pins the launch contract: cwd, flags, MCP config contents and cleanup, heartbeats,
+  cursor advance, and the `WATCHDOG_MCP=0` opt-out.
+
 ### Changed
 - CUSTOMER-SETUP.md describes the marker-based role install (append, `CLAUDE.local.md` for tracked
   files, `--no-role-append`) instead of the pre-2.1 "skip if exists" behaviour.

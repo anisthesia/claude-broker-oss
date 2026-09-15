@@ -162,6 +162,15 @@ for its identity and protocol. Generate starter ones with `npm run setup -- --sc
 (writes `roles/orchestrator.md` + `roles/<worker>.md`), then place each worker's file as the
 `CLAUDE.md` in its working directory. Without a role file the session still runs, just unguided.
 
+### How a session reaches the broker
+
+`watchdog.sh` hands every session an explicit MCP config: a mode-600 temp file naming one server,
+`broker`, at `BROKER_URL/mcp` with the bearer token it was started with, passed as
+`--mcp-config` (plus `--strict-mcp-config` on CLIs that support it, so no user- or project-scope
+registration can attach the worker to a *different* broker). Worker checkouts therefore need no
+`.mcp.json`, and an isolated worktree works without one. Set `WATCHDOG_MCP=0` in the broker's
+environment to launch sessions with no MCP flags and rely on the checkout / user scope instead.
+
 ### Git isolation (concurrent code workers)
 
 If multiple workers write code at the same time, run them on **isolated git worktrees** so they

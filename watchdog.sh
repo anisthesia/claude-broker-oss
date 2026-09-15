@@ -20,12 +20,18 @@
 #   --max-session-minutes <minutes>   Hard ceiling on a session's duration (default: 45).
 #   --print-channels                  Print the derived sibling channels (telemetry, status,
 #                                     rate-limits, patrol-watch) and exit — for tests and debugging.
+#   --once                            Run at most one session, then exit (tests / one-shot runs).
 #
 # Environment:
 #   BROKER_URL      broker base URL (default http://localhost:8080) — injected by start_worker
 #   BROKER_SECRET   bearer token; must match the broker SHARED_SECRET — injected by start_worker
 #   CLAUDE_BIN      path to the claude binary (default: resolved from PATH)
 #   CLAUDE_MODEL    model id for sessions (default: claude-haiku-4-5-20251001)
+#   WATCHDOG_MCP    1 (default): hand every session its own MCP config pointing at BROKER_URL
+#                   (--mcp-config, plus --strict-mcp-config when supported) so a worker never
+#                   depends on a .mcp.json in its checkout or a user-scope registration — and can
+#                   never silently attach to a different broker. 0: launch with no MCP flags.
+#   WATCHDOG_JITTER_MAX  start-up jitter ceiling in seconds (default 20; 0 in tests)
 #
 # Stop: Ctrl+C (or stop_worker from the broker).
 
@@ -47,6 +53,7 @@ REPO_ROOT_OVERRIDE=""
 WORK_DIR_OVERRIDE=""         # explicit session working dir (e.g. an isolated worktree)
 MAX_SESSION_MINUTES=""
 PRINT_CHANNELS=0
+ONCE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --work-dir)               WORK_DIR_OVERRIDE="$2";      shift 2 ;;
     --max-session-minutes)    MAX_SESSION_MINUTES="$2";    shift 2 ;;
     --print-channels)         PRINT_CHANNELS=1;            shift ;;
+    --once)                   ONCE=1;                      shift ;;
     *) echo "[watchdog:$WORKER] Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -108,6 +116,21 @@ if [[ -n "$BROKER_SECRET" ]]; then
 fi
 _curl() { if [[ -n "$_CURL_CFG" ]]; then curl -K "$_CURL_CFG" "$@"; else curl "$@"; fi; }
 
+# Every session gets the broker as an explicit MCP server. Without this a headless worker only
+# has broker tools if its checkout happens to carry a .mcp.json (worktrees do not) or the machine
+# has a user-scope registration — which may point at a *different* broker. The config lives in a
+# mode-600 temp file (it carries the bearer token) and is removed on exit.
+_MCP_CFG=""; _MCP_ARGS=()
+if [[ "${WATCHDOG_MCP:-1}" == "1" ]]; then
+  _MCP_CFG=$(mktemp /tmp/watchdog-mcp-XXXXXX); chmod 600 "$_MCP_CFG"
+  if [[ -n "$BROKER_SECRET" ]]; then
+    printf '{"mcpServers":{"broker":{"type":"http","url":"%s/mcp","headers":{"Authorization":"Bearer %s"}}}}\n' "$BROKER_URL" "$BROKER_SECRET" > "$_MCP_CFG"
+  else
+    printf '{"mcpServers":{"broker":{"type":"http","url":"%s/mcp"}}}\n' "$BROKER_URL" > "$_MCP_CFG"
+  fi
+  _MCP_ARGS=(--mcp-config "$_MCP_CFG")
+fi
+
 if [[ ! -d "$WORKER_DIR" ]]; then
   echo "[watchdog:$WORKER] ERROR: directory not found: $WORKER_DIR"
   exit 1
@@ -123,6 +146,11 @@ if [[ ! -x "$CLAUDE" ]]; then
 fi
 if ! command -v node >/dev/null 2>&1; then
   echo "[watchdog:$WORKER] ERROR: node is required (used for JSON parsing)"; exit 1
+fi
+# --strict-mcp-config ignores every other MCP source (user/project scope) so the session sees
+# exactly one broker. Older CLIs lack the flag; fall back to --mcp-config alone.
+if [[ -n "$_MCP_CFG" ]] && "$CLAUDE" --help 2>/dev/null | grep -q -- "--strict-mcp-config"; then
+  _MCP_ARGS+=(--strict-mcp-config)
 fi
 
 # ── Cursor / lock files ───────────────────────────────────────────────────────
@@ -226,9 +254,13 @@ _acquire_slot() {
 }
 _release_slot() { [[ -n "$_SLOT_FILE" ]] && rm -f "$_SLOT_FILE"; _SLOT_FILE=""; }
 
-trap 'rm -f "$LOCK_FILE" "$_CURL_CFG"; _release_slot; echo "[watchdog:$WORKER] stopping"; exit 0' INT TERM
+_cleanup() { rm -f "$LOCK_FILE" "$_CURL_CFG" "$_MCP_CFG"; _release_slot; }
+trap '_cleanup; echo "[watchdog:$WORKER] stopping"; exit 0' INT TERM
+# After a session: with --once, exit instead of waiting for the next one.
+_pause() { if [[ $ONCE -eq 1 ]]; then _cleanup; echo "[watchdog:$WORKER] --once: session complete — exiting"; exit 0; fi; sleep "$1"; }
 
-_JITTER=$(( RANDOM % 20 )); [[ $_JITTER -gt 0 ]] && sleep "$_JITTER"
+_JMAX=${WATCHDOG_JITTER_MAX:-20}
+if [[ "$_JMAX" -gt 0 ]]; then _JITTER=$(( RANDOM % _JMAX )); [[ $_JITTER -gt 0 ]] && sleep "$_JITTER"; fi
 
 echo "[watchdog:$WORKER] starting — dir: $WORKER_DIR  inbox: $INBOX_CHANNEL  max-session: $(( MAX_SESSION_SECONDS / 60 ))min"
 [[ -n "$PATROL_INTERVAL" ]] && echo "[watchdog:$WORKER] patrol every ${PATROL_INTERVAL}s (watch: $PATROL_WATCH_CHANNEL)"
@@ -267,7 +299,7 @@ while true; do
   _TFLAG=$(mktemp /tmp/watchdog-${SAFE_NAME}-timeout-XXXXXX); rm -f "$_TFLAG"
 
   set +e
-  ( cd "$WORKER_DIR"; exec "$CLAUDE" -p "go" --dangerously-skip-permissions --model "${CLAUDE_MODEL:-claude-haiku-4-5-20251001}" ) > "$TMPOUT" 2>&1 &
+  ( cd "$WORKER_DIR"; exec "$CLAUDE" -p "go" --dangerously-skip-permissions --model "${CLAUDE_MODEL:-claude-haiku-4-5-20251001}" ${_MCP_ARGS[@]+"${_MCP_ARGS[@]}"} ) > "$TMPOUT" 2>&1 &
   _BGPID=$!
 
   ( _START=$(date +%s)
@@ -304,7 +336,7 @@ while true; do
         PL=$(json_max_id "$PATROL_JSON"); [[ "$PL" -gt "0" ]] && write_patrol_cursor "$PL"
       fi
       echo "[watchdog:$WORKER] clean exit — cursor=$MAX_ID, restarting in ${DELAY_NORMAL}s"
-      RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_NORMAL
+      RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; _pause $DELAY_NORMAL
     else
       NO_OUTPUT_RUNS=$((NO_OUTPUT_RUNS + 1))
       if [[ $NO_OUTPUT_RUNS -ge $NO_OUTPUT_MAX ]]; then
@@ -314,19 +346,19 @@ while true; do
       else
         echo "[watchdog:$WORKER] clean exit but nothing posted to $STATUS_CHANNEL — cursor unchanged (attempt $NO_OUTPUT_RUNS/$NO_OUTPUT_MAX), retrying in ${DELAY_CRASH}s"
       fi
-      RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_CRASH
+      RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; _pause $DELAY_CRASH
     fi
   elif [[ "$RATE_LIMITED" == "true" ]]; then
     JIT=$(( RANDOM % 16 )); WAIT=$(( RATE_LIMIT_BACKOFF + JIT ))
     echo "[watchdog:$WORKER] RATE LIMITED — backing off ${WAIT}s"
     emit_rate_limit "$WAIT"
-    sleep $WAIT
+    _pause $WAIT
     RATE_LIMIT_BACKOFF=$(( RATE_LIMIT_BACKOFF * 2 )); [[ $RATE_LIMIT_BACKOFF -gt $RATE_LIMIT_MAX ]] && RATE_LIMIT_BACKOFF=$RATE_LIMIT_MAX
   elif [[ $EXIT_CODE -eq 124 ]]; then
     echo "[watchdog:$WORKER] session timeout — restarting in ${DELAY_CRASH}s (cursor unchanged)"
-    RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_CRASH
+    RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; _pause $DELAY_CRASH
   else
     echo "[watchdog:$WORKER] non-zero exit ($EXIT_CODE) — restarting in ${DELAY_CRASH}s (cursor unchanged)"
-    RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; sleep $DELAY_CRASH
+    RATE_LIMIT_BACKOFF=$DELAY_RATE_LIMIT; _pause $DELAY_CRASH
   fi
 done

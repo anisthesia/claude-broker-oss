@@ -31,6 +31,11 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+// Installed from npm (node_modules/@anisthesia/claude-broker) vs. run from a source checkout —
+// the commands we print back to the operator differ.
+const FROM_PACKAGE = SCRIPT_DIR.split("/").includes("node_modules");
+const START_CMD = FROM_PACKAGE ? "npx claude-broker" : "npm start";
+const SETUP_CMD = FROM_PACKAGE ? "npx claude-broker-setup" : "npm run setup";
 const OUT_DIR = process.cwd(); // where .env / workers.json are written
 
 // ── arg parsing ──────────────────────────────────────────────────────────────
@@ -1144,9 +1149,11 @@ async function main() {
   // 7d. Wire the broker into the project's .mcp.json so sessions opened there get
   // the mcp__broker__* tools with no manual `claude mcp add`.
   let mcpWritten = null;
+  // Non-interactive (--yes) defaults to writing it: a fleet whose sessions cannot reach the
+  // broker is not a working setup. --no-mcp-settings opts out.
   const doMcp = opts.mcpSettings === true ||
-    (opts.mcpSettings !== false && interactive &&
-      (await askYesNo(`Write broker MCP config into ${basename(project)}/.mcp.json? (carries the secret; git-excluded locally — fine for a local broker)`, true)));
+    (opts.mcpSettings !== false && (!interactive ||
+      (await askYesNo(`Write broker MCP config into ${basename(project)}/.mcp.json? (carries the secret; git-excluded locally — fine for a local broker)`, true))));
   if (doMcp) {
     const targets = opts.multiRepo ? components.map(repoPathFor) : [project];
     mcpWritten = targets.map((t) => writeMcpConfig(t, port, secret));
@@ -1157,8 +1164,8 @@ async function main() {
   let hooksWritten = null;
   if (useWorktrees) {
     const doHooks = opts.hooks === true ||
-      (opts.hooks !== false && interactive &&
-        (await askYesNo(`Add scope-guard hooks to ${basename(project)}/.claude/settings.json? (denies the orchestrator direct edits in worker dirs — dispatch via broker instead)`, true)));
+      (opts.hooks !== false && (!interactive ||
+        (await askYesNo(`Add scope-guard hooks to ${basename(project)}/.claude/settings.json? (denies the orchestrator direct edits in worker dirs — dispatch via broker instead)`, true))));
     if (doHooks) hooksWritten = writeScopeGuardHooks({ project, ns, components });
   } else if (opts.hooks === true) {
     line(c.y("  • --hooks skipped: scope-guard hooks need --isolate or --multi-repo (on a shared checkout they would block the workers themselves)."));
@@ -1208,7 +1215,7 @@ async function main() {
     if (!schemaResult.strict) line(`    ${c.dim("Malformed messages warn but still deliver. Re-run with --strict to reject them instead.")}`);
   } else {
     line(`  ${c.y("•")} Schemas not registered — ${schemaResult.reason}.`);
-    line(`    Start the broker (${c.b("npm start")}), then re-run ${c.b("npm run setup")} to register them.`);
+    line(`    Start the broker (${c.b(START_CMD)}), then re-run ${c.b(SETUP_CMD)} to register them.`);
   }
   if (roles) {
     line(`  ${c.g("✓")} Scaffolded ${roles.written.length} role files in ${c.b(roles.dir + "/")} (orchestrator + ${components.length} worker${components.length === 1 ? "" : "s"}${patrols.length ? ` + ${patrols.length} patrol` : ""}${clusters ? ` + ${clusters.length} cluster orchestrator${clusters.length === 1 ? "" : "s"}` : ""}).`);
@@ -1241,7 +1248,7 @@ async function main() {
   }
   line();
   line(c.b("  Next steps:"));
-  line(`    1. Start the broker:   ${c.b("npm start")}`);
+  line(`    1. Start the broker:   ${c.b(START_CMD)}`);
   if (mcpWritten && mcpWritten.some((w) => w.status === "written")) {
     line(`    2. Sessions opened inside the project pick up the broker automatically (.mcp.json).`);
     line(c.dim(`       For sessions elsewhere: claude mcp add --transport http broker http://localhost:${port}/mcp \\`));

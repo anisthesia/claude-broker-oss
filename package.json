@@ -29,7 +29,8 @@
   },
   "main": "server.js",
   "bin": {
-    "claude-broker": "server.js"
+    "claude-broker": "server.js",
+    "claude-broker-setup": "setup.js"
   },
   "files": [
     "server.js",
