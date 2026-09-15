@@ -28,3 +28,7 @@ workers/*/.*-state.json
 
 # Per-machine Claude Code permissions
 .claude/settings.local.json
+
+# Saved alternate env files (.env.vp etc.)
+.env.*
+!.env.example
