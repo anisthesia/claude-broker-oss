@@ -27,6 +27,11 @@ All notable changes to this project are documented here. This project adheres to
   commands, `docs/protocol-v2.md`, and the per-project schema sets and registration scripts for the
   `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
 
+### Changed
+- The npm package ships only the generic protocol schemas (`schemas/{backlog,cluster-status,control,
+  reviewer-inbox,status,telemetry,worker-inbox}.json`). Per-project schema sets, registration scripts,
+  fleet configs and role files stay in the repository but are not published.
+
 ### Fixed
 - **Watchdogs survive a broker restart without becoming orphans.** Subprocess spawns write
   `WORKERS_LOG_DIR/<name>.pid`; at startup the broker re-adopts live pids that still run
