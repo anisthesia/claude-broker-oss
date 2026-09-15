@@ -8,7 +8,7 @@ import { z } from "zod";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { spawn, spawnSync } from "child_process";
-import { readFileSync, writeFileSync, renameSync, mkdirSync, createWriteStream, openSync, closeSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, createWriteStream, openSync, closeSync, accessSync, constants as fsConstants } from "fs";
 import { timingSafeEqual } from "crypto";
 
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
@@ -414,6 +414,10 @@ function expandArgs(args) {
 function spawnWatchdogProc(def, { model } = {}) {
   model = model || def.model;
   assertSafeWorkerName(def.name);
+  // spawn() reports a missing or non-executable binary asynchronously as an 'error' event;
+  // check up front so the caller gets a clear tool error instead of a crash.
+  try { accessSync(WATCHDOG_BIN, fsConstants.X_OK); }
+  catch { throw new Error(`WATCHDOG_BIN is not an executable file: ${WATCHDOG_BIN}`); }
   mkdirSync(WORKERS_LOG_DIR, { recursive: true });
   const outFd = openSync(`${WORKERS_LOG_DIR}/${def.name}.out.log`, "a");
   const errFd = openSync(`${WORKERS_LOG_DIR}/${def.name}.err.log`, "a");
@@ -433,6 +437,11 @@ function spawnWatchdogProc(def, { model } = {}) {
     closeSync(errFd);
   }
   proc.unref();
+  // Belt and braces: an unhandled 'error' event on a ChildProcess is an uncaught exception.
+  proc.on("error", (e) => {
+    console.error(`[claude-broker] watchdog "${def.name}" spawn error: ${e.message}`);
+    watchdogProcs.delete(def.name);
+  });
   proc.on("exit", (code) => {
     console.log(`[claude-broker] watchdog "${def.name}" exited (code ${code ?? "?"})`);
     watchdogProcs.delete(def.name);
@@ -1515,7 +1524,9 @@ function buildServer() {
       assertSafeWorkerName(name);
       let defs = JSON.parse(readFileSync(WORKERS_CONFIG, "utf8"));
       const idx = defs.findIndex(w => w.name === name);
-      const entry = { name, ns, args: [worker_dir, "--repo-root", repo_root, "--inbox-channel", inbox_channel] };
+      // Keep fields the tool does not manage (model, notes, …) when replacing an existing entry.
+      const prev  = idx >= 0 ? defs[idx] : {};
+      const entry = { ...prev, name, ns, args: [worker_dir, "--repo-root", repo_root, "--inbox-channel", inbox_channel] };
 
       if (idx >= 0) {
         defs[idx] = entry;
@@ -1737,7 +1748,7 @@ app.post("/workers/:name/stop", auth, (req, res) => {
 
 // GET /cost?since=<ISO-date> — aggregate session costs from telemetry.
 // Returns { total_usd, sessions, by_worker: [{worker, sessions, total_usd}] }
-app.get("/cost", auth, (req, res) => {
+app.get("/cost", dashboardAuth, (req, res) => {
   let since = Date.now() - 24 * 60 * 60 * 1000; // default: last 24h
   if (req.query.since) {
     const parsed = new Date(req.query.since).getTime();
@@ -1767,7 +1778,7 @@ app.get("/cost", auth, (req, res) => {
 // GET /rate-limits?since=<ISO-date>&worker=<name>
 // Returns rate limit hit log from rate-limits channel.
 // { total_hits, by_worker: [{worker, hits, models, total_backoff_s, last_hit}], events: [...] }
-app.get("/rate-limits", auth, (req, res) => {
+app.get("/rate-limits", dashboardAuth, (req, res) => {
   let since = Date.now() - 7 * 24 * 60 * 60 * 1000; // default: last 7 days
   if (req.query.since) {
     const parsed = new Date(req.query.since).getTime();
@@ -2064,7 +2075,7 @@ app.get("/dashboard", dashboardAuth, (req, res) => {
   workers.forEach(w => {
     w.isManaged = WATCHDOG_BIN.length > 0 &&
                   defs.some(d => d.name === w.sender && (!d.ns || d.ns === w._ns));
-    w.isRunning  = watchdogProcs.has(w.sender);
+    w.isRunning  = !!workerRunningInfo(w.sender);
   });
 
   const hasActions = WATCHDOG_BIN.length > 0;
@@ -2340,13 +2351,13 @@ ${totalCostToday > 0 ? `<div class="cost-bar">
   <span class="cost-bar-label">Today's spend</span>
   <span class="cost-bar-total">$${totalCostToday.toFixed(4)}</span>
   ${Object.entries(costByWorker).sort((a,b)=>b[1]-a[1]).map(([w,c])=>`<span class="cost-bar-worker"><span class="cost-bar-wname">${escHtml(w)}</span> $${c.toFixed(4)}</span>`).join("")}
-  <a href="/cost" class="cost-bar-link" target="_blank">JSON</a>
+  <a href="/cost${tokenParam ? "?" + tokenParam : ""}" class="cost-bar-link" target="_blank">JSON</a>
 </div>` : ""}
 ${totalRlToday > 0 ? `<div class="cost-bar" style="border-color:#6e4c00">
   <span class="cost-bar-label" style="color:#e3b341">Rate limits today</span>
   <span class="cost-bar-total" style="color:#e3b341">${totalRlToday} hit${totalRlToday !== 1 ? "s" : ""}</span>
   ${Object.entries(rlByWorker).sort((a,b)=>b[1]-a[1]).map(([w,n])=>`<span class="cost-bar-worker"><span class="cost-bar-wname">${escHtml(w)}</span> ${n}×</span>`).join("")}
-  <a href="/rate-limits" class="cost-bar-link" target="_blank">JSON</a>
+  <a href="/rate-limits${tokenParam ? "?" + tokenParam : ""}" class="cost-bar-link" target="_blank">JSON</a>
 </div>` : ""}
 
 <div class="section-hdr">

@@ -111,8 +111,8 @@ Active only when `WORKERS_CONFIG` / `WATCHDOG_BIN` are set. See
 | `GET /inbox?channel=&since_id=[&wait_ms=]` | bearer | Lightweight pre-check: `{ pending, count, max_id }`. With `wait_ms` (max 60000) it long-polls and returns as soon as a message lands. |
 | `POST /inbox/batch` | bearer | Same, for many channels in one body `{ "channel": since_id, ... }`. |
 | `POST /messages` | bearer | Post a message over plain REST (body `{ channel, sender, content }`). |
-| `GET /cost` | bearer | Aggregated session-cost rollup from `TELEMETRY_CHANNEL`. |
-| `GET /rate-limits` | bearer | Rate-limit event log from `RATE_LIMIT_CHANNEL`. |
+| `GET /cost` | bearer or `?token=` | Aggregated session-cost rollup from `TELEMETRY_CHANNEL`. |
+| `GET /rate-limits` | bearer or `?token=` | Rate-limit event log from `RATE_LIMIT_CHANNEL`. |
 | `GET /workers` | bearer | Configured workers + running state (JSON). |
 | `POST /workers/:name/start` | bearer | Start a worker. |
 | `POST /workers/:name/stop` | bearer | Stop a worker. |

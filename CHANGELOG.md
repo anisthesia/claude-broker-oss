@@ -28,6 +28,16 @@ All notable changes to this project are documented here. This project adheres to
   `cb`, `dv`, `dx`, `rp` and `sm` namespaces.
 
 ### Fixed
+- **A missing or non-executable `WATCHDOG_BIN` no longer crashes the broker.** `start_worker` checks
+  the binary up front and returns a tool error; the spawned process also gets an `error` handler so
+  a late spawn failure is logged instead of raised as an uncaught exception.
+- Dashboard Start/Stop buttons reflect tmux window state (previously only the in-memory map, so
+  running workers showed "Start" after a broker restart).
+- `register_worker` keeps `model` and other unmanaged fields when replacing an existing entry.
+- The dashboard's JSON links to `/cost` and `/rate-limits` carry `?token=` and those routes accept
+  it, so they no longer 401 under token auth.
+- `.env.example` documents the watchdog-side variables (`BROKER_URL`, `BROKER_SECRET`, `CLAUDE_BIN`,
+  `CLAUDE_MODEL`).
 - **Strict schemas now reject non-JSON content.** Plain text on a strict channel was accepted
   unvalidated; it is now rejected (warn-only channels warn and accept).
 - **Dashboard XSS.** The `ns` query parameter and namespaces derived from channel names were
