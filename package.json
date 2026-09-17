@@ -1,7 +1,7 @@
 {
   "name": "@anisthesia/claude-broker",
   "version": "2.2.1",
-  "description": "A tiny MCP HTTP server that lets multiple Claude Code (or any MCP client) sessions exchange messages over named channels — the coordination backbone for multi-agent workflows.",
+  "description": "A persistent, schema-enforced message bus for Claude Code (or any MCP client) sessions that must outlive a single run — durable channels, long-poll, human-consent gates, and an audit trail for long-lived orchestrator/worker setups.",
   "type": "module",
   "license": "MIT",
   "author": "rideprodev",

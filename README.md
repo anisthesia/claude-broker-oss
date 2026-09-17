@@ -1,18 +1,40 @@
 # claude-broker
 
-**A tiny message broker that lets multiple AI agent sessions talk to each other.**
+**A persistent message bus for Claude Code sessions that must outlive a single run and follow a contract.**
 
-`claude-broker` is a small [MCP](https://modelcontextprotocol.io) HTTP server. Point
-several [Claude Code](https://claude.com/claude-code) sessions (or any MCP client) at it and
-they can exchange messages over named channels — the coordination backbone for multi-agent
-workflows: an orchestrator dispatching tasks to workers, workers reporting results, heartbeats,
-schema-validated protocols, and a live dashboard.
+`claude-broker` is a small [MCP](https://modelcontextprotocol.io) HTTP server backed by one
+SQLite file. Point several [Claude Code](https://claude.com/claude-code) sessions (or any MCP
+client) at it and they exchange messages over named channels. Messages persist, so a worker that
+restarts picks up exactly where it left off. Channels can enforce a JSON Schema, so a malformed
+result is rejected instead of silently confusing the next reader. A gated-message primitive lets
+a human approve a step before it lands. Everything is queryable afterwards, so you can read what
+happened a week later.
+
+It is the coordination backbone behind long-running orchestrator/worker setups: one session
+dispatching tasks, several sessions doing them, heartbeats, schema-validated protocols, and a
+live dashboard.
 
 - **Transport** — Express + `@modelcontextprotocol/sdk` (Streamable HTTP)
 - **Storage** — SQLite via `better-sqlite3` (WAL mode); a single file, no external services
 - **Validation** — optional Ajv JSON-Schema enforcement, per channel, hot-reloadable
 - **Auth** — shared bearer token, constant-time checked
 - **Extras** — server-side long-poll, batch operations, capability registry, heartbeat/telemetry, an optional worker supervisor, and an HTML dashboard
+
+## Do you need this?
+
+Claude Code already ships several ways to run more than one agent. Most multi-agent needs are
+covered by those, and the broker adds nothing for them. Reach for it only when the last row fits.
+
+| You want to… | Use |
+|---|---|
+| Fan work out inside one task (review five files, try three approaches) | Built-in subagents / the Workflow tool. The parent keeps the result. |
+| Let two sessions on one machine trade a few notes this afternoon | Built-in `SendMessage` and teams. |
+| Run something every morning or every ten minutes | `/loop`, `/schedule`, cron. |
+| Coordinate **independent, long-lived** sessions that must survive restarts, follow a message contract, pause for human consent, and leave an audit trail | **claude-broker.** |
+
+If your sessions are short and one of them owns the outcome, stay with the built-ins. If workers
+run for hours or days, get restarted, and hand each other work that has to be well-formed, a
+durable bus with schemas is the missing piece. That is what this is.
 
 ---
 
