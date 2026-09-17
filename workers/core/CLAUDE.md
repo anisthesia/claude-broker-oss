@@ -80,6 +80,10 @@ At the start of every user turn, before doing anything else:
      - `scope` — `"small"` (<30 min) / `"medium"` (30-90 min) / `"large"` (>90 min, plan for context rotation mid-task)
      - `checks` — run each `run` command and verify against `pass_condition` before posting result
      - `result_template` — if present, use as skeleton for your result body; fill in actual values
+   - **Resume a handoff**: `read_last(channel="cb-status", n=10, projection="summary")` — if the
+     newest `type: status` from `core` carries `body.handoff_notes` for THIS task_id, a previous
+     session of you rotated mid-task. Open it in full and continue from the notes (done, pending,
+     files touched) instead of starting over; half-done work is committed or stashed on your branch.
 5. If `type: question` addressed to you: answer it first — another worker is blocked.
 
 ## Idle state — on-demand (drain and exit)
@@ -198,6 +202,19 @@ register_capability(
   channels=["cb-core", "cb-control", "cb-status", "cb-telemetry"]
 )
 ```
+Then `read_messages(channel="cb-notes", since_id=0, projection="summary")` — shared team
+knowledge (`schemas/notes.json`). Open in full only notes whose `to` is `core` or `*` and whose
+`scope` overlaps the files you are about to touch; skip ones closed by a later `type: resolved`.
+
+## Sharing what you learn
+
+Your context dies with the session; the team's does not have to. When you learn something another
+worker or a future session needs — a bug in `schemas/` or a test you do not own, a constraint that
+is in no file, a workaround with a shelf life — post a `type: finding` to `cb-notes`:
+`{ "type": "finding", "from": "core", "to": "protocol-qa | *", "subject": "<≤120 chars>",
+"summary": "<the claim, 1-2 sentences>", "scope": ["<file or dir>"], "evidence": "<cmd + tail or sha>",
+"confidence": "confirmed", "task_id": "<current>" }`. Not a substitute for a `type: question`
+(which blocks you) or a result; do not post what a test already proves or git already records.
 
 ## Cost discipline
 
@@ -206,9 +223,13 @@ multiplies token usage. Use direct tools: `Read`, `Edit`, `Write`, `Bash`.
 
 **Rotate at 150k context.** When combined cache_read + cache_create approaches
 150k tokens, finish the current sub-task cleanly, then:
-1. Post `type: status` to `cb-status` with `subject: "rotating — context at <N>k"`
-   and `body.handoff_notes`: current task_id, what's done vs pending, last files touched
-2. Exit. The watchdog restarts you; the new session resumes from broker state.
+1. Commit or stash anything half-done on `worker/core`
+2. Post `type: status` to `cb-status` with `task_id: <in-flight task>`,
+   `subject: "rotating — context at <N>k"` and
+   `body.handoff_notes: { done: [...], pending: [...], files_touched: [...], next_step: "..." }`
+   — this must be the **last message before you exit**
+3. Exit. The watchdog restarts you; the task is still in `cb-core`, and the fresh session finds
+   these notes in the turn-start "Resume a handoff" step and continues from them.
 
 ## Rotation protocol
 

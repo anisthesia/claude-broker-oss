@@ -15,6 +15,7 @@ posting results, and heartbeat/telemetry on the side.
 | `telemetry.json` | a telemetry channel | Heartbeat/cost envelope read by the dashboard `/cost` view. |
 | `backlog.json` | the persistent channels (`team-backlog`, `team-sprint-retrospective`) | Deferred-task and retrospective envelopes; resolution requires an outcome (`promoted`/`cancelled`/`superseded`). |
 | `reviewer-inbox.json` | the reviewer's inbox (e.g. `team-reviewer`) | Review-task envelope: requires a `base`/`head`/`checklist` body; only `type: task` is allowed. |
+| `notes.json` | the shared-knowledge channel (`team-notes`, prune-exempt) | `finding` / `decision` envelopes: `subject`, a ≤400-char `summary`, and a `scope` list of files or areas; optional `evidence`, `confidence`, `expires_at`. `resolved` closes one by `ref_id` with an `outcome`. No free-form body — notes are meant to be scanned with `projection: "summary"`. |
 
 ## Registering one
 

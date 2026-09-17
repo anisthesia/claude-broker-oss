@@ -787,6 +787,35 @@ task ever dispatched.
 - **`GET /metrics`** (auth): per-tool calls/errors/avg/max ms, per-route hits, long-poll
   totals and wake ratio, messages inserted, DB rows. In-memory since process start.
 
+### Cross-session context (2026-09-17)
+
+Sessions share nothing but the broker and git; every worker session starts blank (`claude -p`,
+no resume). Audit of what actually crossed the boundary: the task envelope (orchestrator → worker),
+the result envelope (worker → orchestrator), `depends_on` results (worker → worker, via git), and a
+`handoff_notes` status on rotation that nothing ever read back. Three additions, deliberately
+structured rather than transcript-shaped — lesson 5 still holds, the orchestrator is the context
+bottleneck:
+
+- **`get_task_ledger(status_channel, since_id?, only_open?)`.** The ledger every orchestrator
+  role file keeps "in context" is now derived server-side: dispatches (type:task on `<ns>-*`
+  inboxes, meta channels excluded) ⋈ latest result ⋈ latest status/handoff ⋈ open questions, one
+  row per task_id with `state ∈ {pending, in-progress, handoff, blocked, done, failed, skipped}`.
+  A fresh orchestrator session calls it once instead of reading `*-status` from id 0.
+- **`<ns>-notes` (`schemas/notes.json`, prune-exempt).** `finding` and `decision` envelopes with
+  `subject`, a ≤400-char `summary` and a `scope` list, plus `resolved(ref_id, outcome)`. Workers
+  read it with `projection: "summary"` at cold start and open only notes whose `scope` overlaps
+  their `files.write`; the orchestrator folds relevant notes into task `background`. No free-form
+  body on purpose — a note that needs one is a task or a question.
+- **Handoff resume.** The rotating worker's *last* message is `type: status` with `task_id` and
+  `body.handoff_notes {done, pending, files_touched, next_step}`, half-done work committed or
+  stashed on its branch. The fresh session's turn-start checks `read_last(status, n=10,
+  projection="summary")` for its own newest status carrying `handoff_notes` for the task it is
+  about to pick up, and resumes from it. The ledger surfaces these rows as `handoff` so the
+  orchestrator does not re-dispatch a task that is merely mid-rotation.
+
+Not added, on purpose: transcript forwarding, `--resume` across rotations, or orchestrator reads of
+worker diffs. Each would move context back into the bottleneck.
+
 Result-body convention (no schema change — `*-status` schemas reject unknown top-level
 fields): put executable check outcomes in `body.checks` as `[{name, pass, output_tail}]`,
 mirroring the task's `checks`. Zero of 33 production results carried any structured check

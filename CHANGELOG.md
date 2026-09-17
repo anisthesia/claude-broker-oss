@@ -5,7 +5,26 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **`get_task_ledger(status_channel, since_id?, only_open?)`.** Derives the orchestrator's task
+  ledger server-side: every `type: task` dispatched into the namespace's inboxes joined with the
+  latest result, latest status/handoff and any open question per `task_id`, with a `state` of
+  `pending` / `in-progress` / `handoff` / `blocked` / `done` / `failed` / `skipped`. Orchestrator
+  role files call it at turn-start instead of rebuilding the ledger from `read_messages` after a
+  rotation. `open_questions` now shares its scanner with it. `prefix` and `workers` scope it for
+  cluster orchestrators whose status channel is `<ns>-<cluster>-status`.
+- **`schemas/notes.json` and a `<ns>-notes` channel.** Durable shared knowledge between sessions:
+  workers post `type: finding` (subject, ≤400-char `summary`, `scope` of files/areas, evidence) about
+  code outside their ownership; the orchestrator posts `type: decision`; `type: resolved` closes one
+  by `ref_id`. Every worker reads it with `projection: "summary"` at cold start; the orchestrator
+  folds relevant notes into task `background`. The wizard registers it, adds it to `PRUNE_EXEMPT`,
+  and `finding`/`decision` join `PRUNE_SIGNAL_TYPES` by default. `-notes` is excluded from the
+  dispatched-task scans like the other meta channels.
+- **Handoff loop closed in every role file.** A rotating worker's last message is a `type: status`
+  with `task_id` and `body.handoff_notes` (`done`, `pending`, `files_touched`, `next_step`); the
+  fresh session's turn-start ritual now checks `read_last` on the status channel for those notes
+  before starting the inbox task and resumes from them. Before, the notes were written but nothing
+  read them, so a rotated task restarted from scratch.
 
 ## [2.2.1] — 2026-09-16
 

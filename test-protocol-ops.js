@@ -7,6 +7,8 @@
  *   *-telemetry transient-state compaction on send_message and POST /messages
  *   GET /inbox?wait_ms long-poll
  *   GET /metrics
+ *   get_task_ledger (derived per-task state)
+ *   schemas/notes.json on a <ns>-notes channel
  *
  * Runs against BROKER_URL (default http://localhost:8080/mcp) with SHARED_SECRET.
  * Uses throwaway channels prefixed "tpo-<run>-" and purges them at the end.
@@ -173,6 +175,94 @@ console.log("\n7. /metrics");
   assert(m.long_polls.total >= 2 && m.long_polls.woken >= 1 && m.long_polls.active === 0, "long-poll counters track /inbox waits", JSON.stringify(m.long_polls));
   assert((m.http["GET /inbox"] || 0) >= 4 && (m.http["POST /messages"] || 0) >= 1, "http route counters present", JSON.stringify(m.http));
   assert(!JSON.stringify(m.http).includes("token="), "no query strings in http counters");
+}
+
+// ── 8. get_task_ledger ───────────────────────────────────────────────────────
+console.log("\n8. get_task_ledger");
+{
+  const NS = `${P}ldg`;                       // its own namespace: <NS>-status, <NS>-backend, …
+  const st = `${NS}-status`;
+  const task = (id, to, extra = {}) => ({ type: "task", task_id: id, from: "orchestrator", to, subject: `do ${id}`, body: "x", ...extra });
+  await send(`${NS}-backend`,  "orchestrator", task("t-pending",  "backend"));
+  await send(`${NS}-backend`,  "orchestrator", task("t-progress", "backend"));
+  await send(`${NS}-backend`,  "orchestrator", task("t-handoff",  "backend", { scope: "large" }));
+  await send(`${NS}-frontend`, "orchestrator", task("t-blocked",  "frontend"));
+  await send(`${NS}-frontend`, "orchestrator", task("t-done",     "frontend", { depends_on: ["t-progress:backend"] }));
+  await send(`${NS}-frontend`, "orchestrator", task("t-retry",    "frontend"));
+  await send(`${NS}-frontend`, "orchestrator", task("t-retry",    "frontend"));   // re-dispatch
+  await send(`${NS}-control`,  "orchestrator", task("t-broadcast", "*"));          // meta channel: not a dispatch
+  await send(`${NS}-notes`,    "backend",      task("t-note",      "backend"));    // meta channel: not a dispatch
+  await send(st, "backend",  { type: "status", task_id: "t-progress", from: "backend", to: "orchestrator", subject: "waiting on tests" });
+  await send(st, "backend",  { type: "status", task_id: "t-handoff",  from: "backend", to: "orchestrator", subject: "rotating — context at 150k", body: { handoff_notes: "done: parser; pending: tests" } });
+  await send(st, "frontend", { type: "question", task_id: "t-blocked", from: "frontend", to: "orchestrator", subject: "which API?" });
+  await send(st, "frontend", { type: "status", task_id: "t-done", from: "frontend", to: "orchestrator", subject: "starting" });
+  await send(st, "frontend", { type: "result", task_id: "t-done",  from: "frontend", to: "orchestrator", subject: "done", summary: "PASS — shipped", body: { consent_basis: "orchestrator-dispatch-only" } });
+  await send(st, "frontend", { type: "result", task_id: "t-retry", from: "frontend", to: "orchestrator", subject: "retry", summary: "FAIL — flaky", body: {} });
+  await send(st, "frontend", { type: "result", task_id: "t-retry", from: "frontend", to: "orchestrator", subject: "retry", summary: "SKIP — already merged", body: {} });
+  await send(st, "patrol",   { type: "result", task_id: "patrol-0001", from: "patrol", to: "orchestrator", subject: "patrol", summary: "PASS — clean", body: {} });
+
+  const led = JSON.parse((await call("get_task_ledger", { status_channel: st })).text);
+  const by  = Object.fromEntries(led.tasks.map(t => [t.task_id, t]));
+  assert(led.prefix === `${NS}-`, "prefix derived from status channel", led.prefix);
+  assert(led.counts.total === 7, `7 distinct tasks (6 dispatched + 1 undispatched result), got ${led.counts.total}`, JSON.stringify(led.counts));
+  assert(!by["t-broadcast"] && !by["t-note"], "tasks on -control / -notes are not counted as dispatches");
+  assert(by["t-pending"]?.state === "pending" && by["t-pending"].worker === "backend", "pending: dispatched, nothing heard", JSON.stringify(by["t-pending"]));
+  assert(by["t-progress"]?.state === "in-progress" && by["t-progress"].last_status?.subject === "waiting on tests", "in-progress: worker posted a status", JSON.stringify(by["t-progress"]));
+  assert(by["t-handoff"]?.state === "handoff" && by["t-handoff"].last_status?.handoff === true, "handoff: status carries body.handoff_notes", JSON.stringify(by["t-handoff"]));
+  assert(by["t-blocked"]?.state === "blocked" && by["t-blocked"].open_question?.expected_reply_channel === `${NS}-frontend`, "blocked: open question, reply expected on asker inbox", JSON.stringify(by["t-blocked"]));
+  assert(by["t-done"]?.state === "done" && by["t-done"].summary === "PASS — shipped" && by["t-done"].result_id > by["t-done"].last_status.id, "done: result wins over earlier status", JSON.stringify(by["t-done"]));
+  assert(Array.isArray(by["t-done"]?.depends_on) && by["t-done"].depends_on[0] === "t-progress:backend", "depends_on carried through");
+  assert(by["t-retry"]?.state === "skipped" && by["t-retry"].dispatch_count === 2, "latest result decides; re-dispatch counted once", JSON.stringify(by["t-retry"]));
+  assert(by["patrol-0001"]?.state === "done" && by["patrol-0001"].dispatched_at === null && by["patrol-0001"].worker === "patrol", "undispatched result listed with dispatched_at null");
+  assert(led.counts.pending === 1 && led.counts["in-progress"] === 1 && led.counts.handoff === 1 && led.counts.blocked === 1 && led.counts.done === 2 && led.counts.skipped === 1, "counts per state", JSON.stringify(led.counts));
+  const ids = led.tasks.map(t => t.dispatch_id ?? t.result_id);
+  assert(ids.every((v, i) => i === 0 || v >= ids[i - 1]), "rows ordered by dispatch id");
+
+  const open = JSON.parse((await call("get_task_ledger", { status_channel: st, only_open: true })).text);
+  assert(open.tasks.length === 4 && open.counts.total === 7, "only_open drops finished rows but counts stay whole", JSON.stringify(open.tasks.map(t => t.task_id)));
+
+  await send(`${NS}-frontend`, "orchestrator", { type: "note", task_id: "t-blocked", from: "orchestrator", to: "frontend", subject: "answer", body: "use v2" });
+  const after = JSON.parse((await call("get_task_ledger", { status_channel: st })).text);
+  assert(after.tasks.find(t => t.task_id === "t-blocked").state === "pending", "answered question unblocks the task");
+
+  const since = JSON.parse((await call("get_task_ledger", { status_channel: st, since_id: by["t-handoff"].dispatch_id })).text);
+  assert(!since.tasks.find(t => t.task_id === "t-pending") && since.tasks.find(t => t.task_id === "t-blocked"), "since_id bounds the dispatch scan");
+
+  // Cluster layout: workers post to <ns>-<cluster>-status but their inboxes are <ns>-<worker>.
+  const cst = `${NS}-alpha-status`;
+  await send(cst, "backend", { type: "result", task_id: "t-progress", from: "backend", to: "alpha-orch", subject: "x", summary: "PASS — via cluster", body: {} });
+  const naive = JSON.parse((await call("get_task_ledger", { status_channel: cst })).text);
+  assert(naive.counts.total === 1 && naive.tasks[0].dispatched_at === null, "without prefix a cluster status channel sees no dispatches", JSON.stringify(naive.counts));
+  const clus = JSON.parse((await call("get_task_ledger", { status_channel: cst, prefix: `${NS}-`, workers: ["backend"] })).text);
+  assert(clus.counts.total === 3 && clus.tasks.every(t => t.worker === "backend"), "prefix + workers scope the ledger to the cluster's workers", JSON.stringify(clus.tasks.map(t => [t.task_id, t.worker])));
+  assert(clus.tasks.find(t => t.task_id === "t-progress").state === "done", "cluster status channel supplies the result");
+  assert(!clus.tasks.find(t => t.task_id === "t-blocked"), "other clusters' workers are excluded");
+}
+
+// ── 9. schemas/notes.json ────────────────────────────────────────────────────
+console.log("\n9. notes schema");
+{
+  const { readFileSync } = await import("node:fs");
+  const ch = `${P}notes`;
+  const reg = await call("register_channel_schema", { channel: ch, schema: readFileSync("schemas/notes.json", "utf8"), strict: true, version: "1.0" });
+  assert(/Registered schema/.test(reg.text), "notes schema registers", reg.text);
+  const finding = { type: "finding", from: "core", to: "protocol-qa", subject: "schema loader swallows parse errors", summary: "loadSchema() returns null on invalid JSON instead of throwing, so a bad schema file registers as 'no schema'.", scope: ["server.js", "schemas/"], evidence: "node -e 'require(\"./server.js\")' with a truncated schemas/x.json", confidence: "confirmed", task_id: "cb-2026-09-17-x" };
+  const ok = await send(ch, "core", finding);
+  assert(!ok.isError, "finding with scope + summary accepted", ok.text);
+  const dec = await send(ch, "orchestrator", { type: "decision", from: "orchestrator", to: "*", subject: "keep -notes prune-exempt", summary: "Notes are read at cold start by every worker; a 48h prune would silently drop them. Exempt like -backlog.", scope: ["config"] });
+  assert(!dec.isError, "decision accepted", dec.text);
+  const noScope = await send(ch, "core", { type: "finding", from: "core", to: "*", subject: "vague", summary: "something is off somewhere in the code" });
+  assert(noScope.isError, "finding without scope rejected");
+  const extra = await send(ch, "core", { ...finding, body: "free text" });
+  assert(extra.isError, "unknown top-level field rejected (no free-form body)");
+  const findingId = Number(ok.text.match(/#(\d+)/)?.[1] || 0);
+  const res = await send(ch, "protocol-qa", { type: "resolved", from: "protocol-qa", subject: "loader fixed", ref_id: findingId || 1, outcome: "fixed", task_id: "cb-2026-09-17-y" });
+  assert(!res.isError, "resolved with ref_id + outcome accepted", res.text);
+  const badRes = await send(ch, "protocol-qa", { type: "resolved", from: "protocol-qa", subject: "loader fixed", ref_id: 1 });
+  assert(badRes.isError, "resolved without outcome rejected");
+  const summ = (await call("read_messages", { channel: ch, since_id: 0, projection: "summary" })).text;
+  assert(summ.includes("schema loader swallows parse errors") && summ.includes("loadSchema() returns null"), "summary projection shows subject + summary of a note");
+  await call("clear_channel_schema", { channel: ch });
 }
 
 // ── cleanup ──────────────────────────────────────────────────────────────────

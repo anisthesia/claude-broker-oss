@@ -589,5 +589,185 @@
       "--inbox-channel",
       "voice-reviewer"
     ]
+  },
+  {
+    "name": "crm-backend",
+    "ns": "crm",
+    "args": [
+      "workers/backend",
+      "--repo-root",
+      "/Users/anis/myprojects/angeloneCRM",
+      "--inbox-channel",
+      "crm-backend"
+    ],
+    "model": "sonnet"
+  },
+  {
+    "name": "crm-frontend",
+    "ns": "crm",
+    "args": [
+      "workers/frontend",
+      "--repo-root",
+      "/Users/anis/myprojects/angeloneCRM",
+      "--inbox-channel",
+      "crm-frontend"
+    ],
+    "model": "sonnet"
+  },
+  {
+    "name": "crm-ops",
+    "ns": "crm",
+    "args": [
+      "workers/ops",
+      "--repo-root",
+      "/Users/anis/myprojects/angeloneCRM",
+      "--inbox-channel",
+      "crm-ops"
+    ],
+    "model": "sonnet"
+  },
+  {
+    "name": "crm-reviewer",
+    "ns": "crm",
+    "args": [
+      "workers/code-reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/angeloneCRM",
+      "--inbox-channel",
+      "crm-reviewer"
+    ],
+    "model": "sonnet"
+  },
+  {
+    "name": "trippy-api-airline",
+    "ns": "trippy",
+    "args": [
+      "api-airline",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-api-airline"
+    ]
+  },
+  {
+    "name": "trippy-api-auth",
+    "ns": "trippy",
+    "args": [
+      "api-auth",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-api-auth"
+    ]
+  },
+  {
+    "name": "trippy-api-email",
+    "ns": "trippy",
+    "args": [
+      "api-email",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-api-email"
+    ]
+  },
+  {
+    "name": "trippy-api-hotel",
+    "ns": "trippy",
+    "args": [
+      "api-hotel",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-api-hotel"
+    ]
+  },
+  {
+    "name": "trippy-b2b-master",
+    "ns": "trippy",
+    "args": [
+      "b2b-master",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-b2b-master"
+    ]
+  },
+  {
+    "name": "trippy-b2b-portal",
+    "ns": "trippy",
+    "args": [
+      "b2b-portal",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-b2b-portal"
+    ]
+  },
+  {
+    "name": "trippy-b2b-portal-api",
+    "ns": "trippy",
+    "args": [
+      "b2b-portal-api",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-b2b-portal-api"
+    ]
+  },
+  {
+    "name": "trippy-b2b-pricewatch",
+    "ns": "trippy",
+    "args": [
+      "b2b-pricewatch",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-b2b-pricewatch"
+    ]
+  },
+  {
+    "name": "trippy-b2b-pricewatch-portal",
+    "ns": "trippy",
+    "args": [
+      "b2b-pricewatch-portal",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-b2b-pricewatch-portal"
+    ]
+  },
+  {
+    "name": "trippy-search",
+    "ns": "trippy",
+    "args": [
+      "search",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-search"
+    ]
+  },
+  {
+    "name": "trippy-web",
+    "ns": "trippy",
+    "args": [
+      "web",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid/.claude-worktrees",
+      "--inbox-channel",
+      "trippy-web"
+    ]
+  },
+  {
+    "name": "trippy-reviewer",
+    "ns": "trippy",
+    "args": [
+      "reviewer",
+      "--repo-root",
+      "/Users/anis/myprojects/trippybid",
+      "--inbox-channel",
+      "trippy-reviewer"
+    ]
   }
 ]

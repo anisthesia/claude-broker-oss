@@ -25,7 +25,7 @@ const PRUNE_MAX_AGE_MS   = Number(process.env.PRUNE_MAX_AGE_MS)       || 48 * 60
 const PRUNE_EXEMPT       = (process.env.PRUNE_EXEMPT || "").split(",").map(s => s.trim()).filter(Boolean);
 // Compacting prune: "signal" message types (the audit trail) live longer than chatter.
 // Heartbeats/status/notes go at PRUNE_MAX_AGE_MS; tasks/results/questions at PRUNE_SIGNAL_MAX_AGE_MS.
-const PRUNE_SIGNAL_TYPES     = (process.env.PRUNE_SIGNAL_TYPES || "task,result,question,error,contract-change,contract-proposal").split(",").map(s => s.trim()).filter(Boolean);
+const PRUNE_SIGNAL_TYPES     = (process.env.PRUNE_SIGNAL_TYPES || "task,result,question,error,contract-change,contract-proposal,finding,decision").split(",").map(s => s.trim()).filter(Boolean);
 const PRUNE_SIGNAL_MAX_AGE_MS = Number(process.env.PRUNE_SIGNAL_MAX_AGE_MS) || 30 * 24 * 60 * 60 * 1000; // 30 d
 // On *-telemetry channels, a new row from a sender evicts that sender's older rows whose
 // state is transient (working/idle-polling). Session-end and idle-exit rows are kept so
@@ -359,13 +359,13 @@ const stmtReadLast = db.prepare(
 );
 
 // Count type:task messages dispatched into worker inboxes for a namespace (derived from status channel).
-// Excludes meta-channels (status, control, telemetry, backlog, sprint-retrospective).
+// Excludes meta-channels (status, control, telemetry, backlog, sprint-retrospective, notes).
 const stmtSprintDispatched = db.prepare(`
   SELECT COUNT(DISTINCT json_extract(content, '$.task_id')) AS n FROM messages
   WHERE channel LIKE ? ESCAPE '\\'
     AND channel NOT LIKE '%-status' AND channel NOT LIKE '%-control'
     AND channel NOT LIKE '%-telemetry' AND channel NOT LIKE '%-backlog'
-    AND channel NOT LIKE '%-sprint-retrospective'
+    AND channel NOT LIKE '%-sprint-retrospective' AND channel NOT LIKE '%-notes'
     AND json_valid(content) AND json_extract(content, '$.type') = 'task'
 `);
 // LIKE pattern for the worker-inbox channels a status channel governs: "<ns>-%" for a
@@ -375,6 +375,36 @@ function sprintScopePattern(statusChannel) {
   if (!statusChannel.includes("-")) return "%";
   return `${escLike(statusChannel.slice(0, statusChannel.lastIndexOf("-")))}-%`;
 }
+// Namespace prefix a status channel belongs to: "cb-" for "cb-status", "" for a bare "status".
+function nsPrefixOf(statusChannel) {
+  if (!statusChannel.includes("-")) return "";
+  return statusChannel.slice(0, statusChannel.lastIndexOf("-") + 1);
+}
+
+// get_task_ledger: every type:task dispatched into the namespace's worker inboxes (same
+// meta-channel exclusions as stmtSprintDispatched), oldest first.
+const stmtLedgerTasks = db.prepare(`
+  SELECT id, channel, content, created_at FROM messages
+  WHERE channel LIKE ? ESCAPE '\\' AND id > ?
+    AND channel NOT LIKE '%-status' AND channel NOT LIKE '%-control'
+    AND channel NOT LIKE '%-telemetry' AND channel NOT LIKE '%-backlog'
+    AND channel NOT LIKE '%-sprint-retrospective' AND channel NOT LIKE '%-notes'
+    AND json_valid(content) AND json_extract(content, '$.type') = 'task'
+  ORDER BY id ASC
+`);
+// Latest row per task_id on a channel whose type is in the JSON array parameter.
+const stmtLedgerLatestByType = db.prepare(`
+  WITH latest AS (
+    SELECT json_extract(content, '$.task_id') AS task_id, MAX(id) AS max_id
+    FROM messages
+    WHERE channel = ? AND json_valid(content)
+      AND json_extract(content, '$.type') IN (SELECT value FROM json_each(?))
+      AND json_extract(content, '$.task_id') IS NOT NULL
+    GROUP BY task_id
+  )
+  SELECT l.task_id, m.id, m.sender, m.content, m.created_at
+  FROM latest l JOIN messages m ON m.id = l.max_id
+`);
 
 // Module-level prepared statements for /cost, /rate-limits, and dashboard (avoids inline prepare on each request).
 // The REST rollups read the configured channel plus every namespaced sibling (<ns>-telemetry,
@@ -406,7 +436,7 @@ const stmtWorkerTiming = db.prepare(`
       AND channel NOT LIKE 'test%'
       AND channel NOT LIKE '%-status' AND channel NOT LIKE '%-telemetry'
       AND channel NOT LIKE '%-control' AND channel NOT LIKE '%-backlog'
-      AND channel NOT LIKE '%-sprint-retrospective'
+      AND channel NOT LIKE '%-sprint-retrospective' AND channel NOT LIKE '%-notes'
   ),
   results AS (
     SELECT json_extract(content,'$.task_id') AS task_id,
@@ -729,6 +759,34 @@ function fetchFiltered(channel, sinceId, lim, filterSender, filterType) {
 function fetchFeedRows(channels, signalOnly, limit) {
   if (channels.length === 0) return [];
   return getFeedStmt(channels.length, signalOnly).all(...channels, limit);
+}
+
+// A question is open when nothing later on the asker's inbox names its task_id and the asker
+// has not posted a result for it. Shared by open_questions and get_task_ledger.
+function scanOpenQuestions(prefix, max_age_ms) {
+  const now  = Date.now();
+  const rows = stmtQuestions.all(`${prefix}%`);
+  const open = [];
+  let answered = 0;
+  for (const r of rows) {
+    if (max_age_ms && now - r.created_at > max_age_ms) continue;
+    let q = {};
+    try { q = JSON.parse(r.content); } catch { continue; }
+    const asker  = typeof q.from === "string" && q.from ? q.from : r.sender;
+    const taskId = typeof q.task_id === "string" && q.task_id ? q.task_id : null;
+    const inbox  = `${prefix}${asker}`;
+    const reply  = stmtQuestionReply.get(inbox, r.id, taskId, taskId, taskId);
+    const self   = taskId ? stmtQuestionSelfResult.get(`${prefix}%`, r.id, r.sender, taskId) : null;
+    if (reply || self) { answered++; continue; }
+    open.push({
+      id: r.id, channel: r.channel, from: asker, to: q.to ?? null, task_id: taskId,
+      subject: typeof q.subject === "string" ? q.subject : null,
+      asked_at: new Date(r.created_at).toISOString(),
+      age_min: Math.round((now - r.created_at) / 60000),
+      expected_reply_channel: inbox,
+    });
+  }
+  return { open, answered };
 }
 
 // ── Background auto-pruning ───────────────────────────────────────────────────
@@ -1444,29 +1502,96 @@ function buildServer() {
       max_age_ms:  z.number().int().positive().optional().describe("Ignore questions older than this. Default: no limit."),
     },
   }, async ({ prefix, max_age_ms }) => {
-    const now  = Date.now();
-    const rows = stmtQuestions.all(`${prefix}%`);
-    const open = [];
-    let answered = 0;
-    for (const r of rows) {
-      if (max_age_ms && now - r.created_at > max_age_ms) continue;
-      let q = {};
-      try { q = JSON.parse(r.content); } catch { continue; }
-      const asker  = typeof q.from === "string" && q.from ? q.from : r.sender;
-      const taskId = typeof q.task_id === "string" && q.task_id ? q.task_id : null;
-      const inbox  = `${prefix}${asker}`;
-      const reply  = stmtQuestionReply.get(inbox, r.id, taskId, taskId, taskId);
-      const self   = taskId ? stmtQuestionSelfResult.get(`${prefix}%`, r.id, r.sender, taskId) : null;
-      if (reply || self) { answered++; continue; }
-      open.push({
-        id: r.id, channel: r.channel, from: asker, to: q.to ?? null, task_id: taskId,
-        subject: typeof q.subject === "string" ? q.subject : null,
-        asked_at: new Date(r.created_at).toISOString(),
-        age_min: Math.round((now - r.created_at) / 60000),
-        expected_reply_channel: inbox,
+    const { open, answered } = scanOpenQuestions(prefix, max_age_ms);
+    return { content: [{ type: "text", text: JSON.stringify({ prefix, open, open_count: open.length, answered_count: answered }) }] };
+  });
+
+  // ── get_task_ledger ──────────────────────────────────────────────────────────
+  // The orchestrator role files keep a "task ledger" (task_id → worker/status/blockers) in
+  // context and rebuild it from message archaeology after every rotation. This derives it
+  // server-side in three indexed scans so a fresh orchestrator session starts from the
+  // current state instead of re-reading the status channel from id 0.
+  server.registerTool("get_task_ledger", {
+    title: "Derive the task ledger for a namespace",
+    description: "Joins every type:task dispatched into the namespace's worker inboxes against the latest result, latest status/handoff and any open question per task_id, and returns one row per task with a derived state: pending (dispatched, nothing heard), in-progress (worker posted a status), handoff (worker rotated mid-task and left handoff notes), blocked (open question), done / failed / skipped (by the latest result's summary prefix). Results whose task was never dispatched (or whose dispatch was pruned) are included with dispatched_at null. Use at orchestrator turn-start instead of rebuilding the ledger from read_messages; pass only_open=true to skip finished tasks.",
+    inputSchema: {
+      status_channel: z.string().min(1).describe("The namespace's status channel, e.g. 'cb-status'. Inboxes are every '<ns>-*' channel except the meta channels."),
+      since_id:       z.number().int().nonnegative().default(0).describe("Only consider tasks dispatched with message id > this. Default 0 (whole history)."),
+      only_open:      z.boolean().default(false).describe("Omit done / failed / skipped tasks. Default false."),
+      prefix:         z.string().optional().describe("Namespace prefix for the inbox and question scan, e.g. 'dv-'. Default: derived from status_channel. Cluster orchestrators whose status channel is '<ns>-<cluster>-status' must pass '<ns>-' or their workers' inboxes are not found."),
+      workers:        z.array(z.string().min(1)).max(100).optional().describe("Only include tasks for these workers (matched against the task's 'to' or the inbox suffix). Cluster orchestrators pass their own workers."),
+    },
+  }, async ({ status_channel, since_id, only_open, prefix: prefixOpt, workers }) => {
+    const prefix   = prefixOpt ?? nsPrefixOf(status_channel);
+    const pattern  = prefixOpt ? `${escLike(prefixOpt)}%` : sprintScopePattern(status_channel);
+    const workerSet = workers && workers.length ? new Set(workers) : null;
+    const tasks    = new Map();
+    const clip     = (v) => typeof v === "string" && v.length > 160 ? v.slice(0, 160) + "…" : v;
+
+    for (const r of stmtLedgerTasks.all(pattern, since_id ?? 0)) {
+      let p; try { p = JSON.parse(r.content); } catch { continue; }
+      const taskId = typeof p.task_id === "string" && p.task_id ? p.task_id : null;
+      if (!taskId) continue;
+      const worker = typeof p.to === "string" && p.to && p.to !== "*" ? p.to : r.channel.slice(prefix.length);
+      if (workerSet && !workerSet.has(worker) && !workerSet.has(r.channel.slice(prefix.length))) continue;
+      const prev = tasks.get(taskId);
+      if (prev) { prev.dispatch_count++; continue; }
+      tasks.set(taskId, {
+        task_id: taskId, worker, subject: clip(p.subject ?? null),
+        scope: typeof p.scope === "string" ? p.scope : null,
+        depends_on: Array.isArray(p.depends_on) && p.depends_on.length ? p.depends_on : null,
+        dispatch_id: r.id, dispatched_at: new Date(r.created_at).toISOString(), dispatch_count: 1,
+        state: "pending", summary: null, result_id: null, completed_at: null,
+        last_status: null, open_question: null,
       });
     }
-    return { content: [{ type: "text", text: JSON.stringify({ prefix, open, open_count: open.length, answered_count: answered }) }] };
+
+    for (const r of stmtLedgerLatestByType.all(status_channel, JSON.stringify(["result"]))) {
+      let p; try { p = JSON.parse(r.content); } catch { continue; }
+      let t = tasks.get(r.task_id);
+      if (!t) {
+        const w = typeof p.from === "string" ? p.from : r.sender;
+        if (workerSet && !workerSet.has(w)) continue;
+        t = { task_id: r.task_id, worker: w, subject: clip(p.subject ?? null),
+              scope: null, depends_on: null, dispatch_id: null, dispatched_at: null, dispatch_count: 0,
+              state: "pending", summary: null, result_id: null, completed_at: null, last_status: null, open_question: null };
+        tasks.set(r.task_id, t);
+      }
+      const summary = typeof p.summary === "string" ? p.summary : "";
+      t.state = summary.startsWith("FAIL") ? "failed" : summary.startsWith("SKIP") ? "skipped" : "done";
+      t.summary = clip(summary) || null;
+      t.result_id = r.id;
+      t.completed_at = new Date(r.created_at).toISOString();
+    }
+
+    for (const r of stmtLedgerLatestByType.all(status_channel, JSON.stringify(["status", "handoff"]))) {
+      const t = tasks.get(r.task_id);
+      if (!t) continue;
+      let p; try { p = JSON.parse(r.content); } catch { continue; }
+      const handoff = p.type === "handoff" || (p.body && typeof p.body === "object" && p.body.handoff_notes != null);
+      t.last_status = { id: r.id, from: typeof p.from === "string" ? p.from : r.sender, subject: clip(p.subject ?? null),
+                        at: new Date(r.created_at).toISOString(), handoff };
+      // A status only moves a task that has no result yet; it never shadows a result.
+      if (t.result_id == null) t.state = handoff ? "handoff" : "in-progress";
+    }
+
+    for (const q of scanOpenQuestions(prefix, undefined).open) {
+      if (!q.task_id) continue;
+      const t = tasks.get(q.task_id);
+      if (!t) continue;
+      t.open_question = { id: q.id, from: q.from, subject: clip(q.subject), age_min: q.age_min, expected_reply_channel: q.expected_reply_channel };
+      if (t.result_id == null) t.state = "blocked";
+    }
+
+    const counts = { total: 0, pending: 0, "in-progress": 0, handoff: 0, blocked: 0, done: 0, failed: 0, skipped: 0 };
+    const rows = [];
+    for (const t of tasks.values()) {
+      counts.total++; counts[t.state]++;
+      if (only_open && (t.state === "done" || t.state === "failed" || t.state === "skipped")) continue;
+      rows.push(t);
+    }
+    rows.sort((a, b) => (a.dispatch_id ?? a.result_id ?? 0) - (b.dispatch_id ?? b.result_id ?? 0));
+    return { content: [{ type: "text", text: JSON.stringify({ status_channel, prefix, workers: workers ?? null, counts, tasks: rows }) }] };
   });
 
   // ── sprint_summary ───────────────────────────────────────────────────────────

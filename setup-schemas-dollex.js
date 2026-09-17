@@ -25,6 +25,7 @@ const REGISTRATIONS = [
   { channel: "dx-control",   file: "schemas/dx-control.json", strict: true },
   { channel: "dx-telemetry", file: "schemas/dx-telemetry.json", strict: true },
   { channel: "dx-backlog",   file: "schemas/dx-backlog.json", strict: true },
+  { channel: "dx-notes", file: "schemas/notes.json", strict: true },
 ];
 
 async function main() {

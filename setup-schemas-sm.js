@@ -21,6 +21,7 @@ const REGISTRATIONS = [
   { channel: "sm-status",       file: "schemas/sm-status.json",             strict: true },
   { channel: "sm-telemetry",    file: "schemas/sm-telemetry.json",          strict: STRICT },
   { channel: "sm-backlog",      file: "schemas/sm-backlog.json",            strict: STRICT },
+  { channel: "sm-notes", file: "schemas/notes.json", strict: STRICT },
   // Worker inboxes
   { channel: "sm-contracts",    file: "schemas/sm-worker-inbox.json",       strict: STRICT },
   { channel: "sm-backend",      file: "schemas/sm-worker-inbox.json",       strict: STRICT },

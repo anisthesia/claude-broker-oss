@@ -39,6 +39,7 @@ An orchestrator session (infra-orchestrator) dispatches work to you via the
 - `cb-protocol-qa` — your inbox (read this first each turn)
 - `cb-control` — broadcasts from the orchestrator (check this each turn)
 - `cb-status` — post all status updates + results here
+- `cb-notes` — shared team knowledge (`schemas/notes.json`): read at cold start, post `type: finding` when you learn something outside your scope
 
 ## Turn-start ritual
 
@@ -239,12 +240,31 @@ register_capability(
   channels=["cb-protocol-qa", "cb-control", "cb-status", "cb-telemetry"]
 )
 ```
+Then `read_messages(channel="cb-notes", since_id=0, projection="summary")` — shared team
+knowledge. Open in full only notes whose `to` is `protocol-qa` or `*` and whose `scope` overlaps
+the files you are about to touch; skip ones closed by a later `type: resolved`.
+
+## Sharing what you learn
+
+When you learn something another worker or a future session needs — a bug in `server.js` you do
+not own, a constraint in no file, a workaround with a shelf life — post a `type: finding` to
+`cb-notes`: `{ "type": "finding", "from": "protocol-qa", "to": "core | *", "subject": "<≤120 chars>",
+"summary": "<the claim, 1-2 sentences>", "scope": ["<file or dir>"], "evidence": "<cmd + tail or sha>",
+"confidence": "confirmed", "task_id": "<current>" }`. Not a substitute for a `type: question` or a
+result; do not post what a test already proves or git already records.
 
 ## Cost discipline
 
 **Never use the `Agent` tool.** Use direct tools: `Read`, `Edit`, `Write`, `Bash`.
 
-**Rotate at 150k context.** Post handoff note to `cb-status` then exit.
+**Rotate at 150k context.** Commit or stash half-done work on `worker/protocol-qa`, then post a
+`type: status` to `cb-status` with `task_id: <in-flight task>`, `subject: "rotating — context at <N>k"`
+and `body.handoff_notes: { done, pending, files_touched, next_step }` as the **last message before
+you exit**. The task stays in `cb-protocol-qa`; the fresh session resumes from the notes.
+
+**Resume a handoff** (before starting any inbox task): `read_last(channel="cb-status", n=10,
+projection="summary")` — if the newest `type: status` from `protocol-qa` carries `body.handoff_notes`
+for THIS task_id, open it in full and continue from the notes instead of starting over.
 
 ## Rotation protocol
 

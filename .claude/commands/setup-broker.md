@@ -141,13 +141,14 @@ WORKER_REPOS:
   <worker2>: /abs/path/to/repo2
   ...
 
-CHANNELS (6 standard + N worker inboxes + reviewer):
+CHANNELS (7 standard + N worker inboxes + reviewer):
   <PREFIX>-orchestrator          orchestrator inbox
   <PREFIX>-control               orchestrator broadcasts
   <PREFIX>-status                worker results firehose
   <PREFIX>-telemetry             heartbeats
   <PREFIX>-backlog               persistent deferred tasks (NEVER purge)
   <PREFIX>-sprint-retrospective  permanent sprint history (NEVER purge)
+  <PREFIX>-notes                 shared team knowledge: findings + decisions (NEVER purge)
   <PREFIX>-<worker>              (one per worker)
   <PREFIX>-reviewer              code reviewer inbox
 
@@ -174,7 +175,7 @@ FILES TO CREATE — broker repo:
 
 FILES TO MODIFY — broker repo:
   <BROKER_REPO>/workers-broker.json  (append entries)
-  <BROKER_REPO>/.env                 (append <PREFIX>-backlog to PRUNE_EXEMPT)
+  <BROKER_REPO>/.env                 (append <PREFIX>-backlog, <PREFIX>-sprint-retrospective, <PREFIX>-notes to PRUNE_EXEMPT)
 ```
 
 Ask: "Proceed with scaffold?" — Yes / No / Change something.
@@ -1009,6 +1010,8 @@ Create adapted versions for the new prefix. For each file, copy the `cb-` refere
 **`schemas/<PREFIX>-backlog.json`**: adapt `cb-backlog.json`
 - Update `title`, `description` to reference new project and prefix
 
+**`<PREFIX>-notes`**: no per-project file — register the generic `schemas/notes.json` as-is (it has no prefix-specific fields)
+
 ### 5b. Schema registration script
 
 Create `<BROKER_REPO>/setup-schemas-<PREFIX>.js`:
@@ -1038,6 +1041,7 @@ const REGISTRATIONS = [
   { channel: "<PREFIX>-telemetry",            file: "schemas/<PREFIX>-telemetry.json",          strict: STRICT },
   { channel: "<PREFIX>-backlog",              file: "schemas/<PREFIX>-backlog.json",            strict: STRICT },
   { channel: "<PREFIX>-sprint-retrospective", file: "schemas/<PREFIX>-backlog.json",            strict: STRICT },
+  { channel: "<PREFIX>-notes",                file: "schemas/notes.json",                       strict: STRICT },
   { channel: "<PREFIX>-reviewer",             file: "schemas/<PREFIX>-worker-inbox.json",       strict: STRICT },
   // Worker inboxes
   { channel: "<PREFIX>-<worker1>",            file: "schemas/<PREFIX>-worker-inbox.json",       strict: STRICT },
@@ -1133,15 +1137,15 @@ Reviewer entry:
 
 ### 5d. Update `.env` PRUNE_EXEMPT
 
-Read `<BROKER_REPO>/.env`. Find the line starting with `PRUNE_EXEMPT=`. For each of `<PREFIX>-backlog` and `<PREFIX>-sprint-retrospective`, check if it is already in the value:
+Read `<BROKER_REPO>/.env`. Find the line starting with `PRUNE_EXEMPT=`. For each of `<PREFIX>-backlog`, `<PREFIX>-sprint-retrospective` and `<PREFIX>-notes`, check if it is already in the value:
 - If already present → skip that entry, print `[setup-broker] PRUNE_EXEMPT already contains <PREFIX>-backlog, skipped` (for backlog) or `already contains <PREFIX>-sprint-retrospective, skipped` (for retrospective)
 - If not present → append `,<ENTRY>` to the value
 
 After processing both entries, write the file back if any changes were made.
 
-Example: `PRUNE_EXEMPT=dv-backlog,cb-backlog` → `PRUNE_EXEMPT=dv-backlog,cb-backlog,<PREFIX>-backlog,<PREFIX>-sprint-retrospective`
+Example: `PRUNE_EXEMPT=dv-backlog,cb-backlog` → `PRUNE_EXEMPT=dv-backlog,cb-backlog,<PREFIX>-backlog,<PREFIX>-sprint-retrospective,<PREFIX>-notes`
 
-If there is no `PRUNE_EXEMPT` line: add `PRUNE_EXEMPT=<PREFIX>-backlog,<PREFIX>-sprint-retrospective` at the end.
+If there is no `PRUNE_EXEMPT` line: add `PRUNE_EXEMPT=<PREFIX>-backlog,<PREFIX>-sprint-retrospective,<PREFIX>-notes` at the end.
 
 ### 5e. Commit broker repo changes
 

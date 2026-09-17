@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "claude-broker shared-notes envelope",
+  "description": "Durable, addressable team knowledge that outlives any one session: a worker's finding about code outside its ownership, or an orchestrator's decision and its reason. Intended channel: <ns>-notes (prune-exempt). Read with projection='summary' at cold start; open a note in full only when its scope overlaps the files you are about to touch. Resolve a note with type:resolved when it no longer applies.",
+  "version": "1.0",
+  "oneOf": [
+    {
+      "type": "object",
+      "title": "Finding or decision",
+      "required": ["type", "from", "to", "subject", "summary", "scope"],
+      "properties": {
+        "type": { "enum": ["finding", "decision"] },
+        "from": { "type": "string", "minLength": 1, "description": "Worker or orchestrator that posted it." },
+        "to": { "type": "string", "minLength": 1, "description": "Worker it concerns, or '*' for the whole team." },
+        "subject": { "type": "string", "minLength": 3, "maxLength": 120, "description": "Headline, readable in the summary projection." },
+        "summary": { "type": "string", "minLength": 10, "maxLength": 400, "description": "One or two sentences: the claim (finding) or the choice and its reason (decision)." },
+        "scope": {
+          "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1 },
+          "description": "Files, directories or subsystems the note is about, e.g. ['server.js', 'schemas/']. Workers match this against their files.write."
+        },
+        "evidence": { "type": "string", "maxLength": 1000, "description": "How it was established: a command and its output tail, a commit sha, a message id." },
+        "confidence": { "enum": ["confirmed", "suspected"], "description": "Default 'confirmed'." },
+        "task_id": { "type": "string", "minLength": 3, "description": "Task during which the note was made, if any." },
+        "expires_at": { "type": "string", "format": "date-time", "description": "Ignore the note after this instant (e.g. a workaround with a known end date)." },
+        "refs": { "type": "array", "items": { "type": "string" }, "description": "Message ids, commit shas, URLs." }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "Resolved",
+      "required": ["type", "from", "subject", "ref_id", "outcome"],
+      "properties": {
+        "type": { "const": "resolved" },
+        "from": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "ref_id": { "type": "integer", "minimum": 1, "description": "Message id of the finding/decision this closes." },
+        "outcome": { "enum": ["fixed", "superseded", "invalid", "expired"] },
+        "summary": { "type": "string", "maxLength": 400 },
+        "task_id": { "type": "string", "minLength": 3 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

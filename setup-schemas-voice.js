@@ -22,6 +22,7 @@ const REGISTRATIONS = [
   { channel: "voice-telemetry",           file: "schemas/voice-telemetry.json",           strict: STRICT },
   { channel: "voice-backlog",             file: "schemas/voice-backlog.json",             strict: STRICT },
   { channel: "voice-sprint-retrospective",file: "schemas/voice-backlog.json",             strict: STRICT },
+  { channel: "voice-notes", file: "schemas/notes.json", strict: STRICT },
   { channel: "voice-reviewer",            file: "schemas/voice-worker-inbox.json",        strict: STRICT },
   // Worker inboxes
   { channel: "voice-backend",             file: "schemas/voice-worker-inbox.json",        strict: STRICT },

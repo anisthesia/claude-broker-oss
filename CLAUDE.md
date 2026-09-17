@@ -64,7 +64,7 @@ node setup-schemas-dollex.js
 PORT=8080
 SHARED_SECRET=<long random string>
 DB_PATH=./broker.db
-PRUNE_EXEMPT=dv-backlog,dv-sprint-retrospective,cb-backlog,dv-rate-limits
+PRUNE_EXEMPT=dv-backlog,dv-sprint-retrospective,cb-backlog,cb-notes,dv-rate-limits
 WATCHDOG_BIN=/Users/anis/myprojects/dogsvilla/scripts/watchdog.sh
 WORKERS_CONFIG=/Users/anis/myprojects/claude-broker-oss/workers-dogsvilla.json
 WORKERS_LOG_DIR=/Users/anis/myprojects/claude-broker-oss/worker-logs
@@ -80,7 +80,7 @@ WORKERS_LOG_DIR=/Users/anis/myprojects/claude-broker-oss/worker-logs
 `list_channel_schemas`, `register_capability`, `deregister_capability`,
 `list_capabilities`, `list_workers`, `start_worker`, `stop_worker`,
 `upsert_heartbeat`, `get_latest_heartbeats`, `turn_start`,
-`sprint_summary`, `sprint_file_conflicts`, `open_questions`,
+`sprint_summary`, `sprint_file_conflicts`, `open_questions`, `get_task_ledger`,
 `register_worker`, `deregister_worker`.
 
 REST: `GET /health`, `GET /inbox` (optional `wait_ms` long-poll), `POST /inbox/batch`,
@@ -106,6 +106,7 @@ REST: `GET /health`, `GET /inbox` (optional `wait_ms` long-poll), `POST /inbox/b
 | `cb-status` | all workers post status + results |
 | `cb-telemetry` | heartbeats |
 | `cb-backlog` | persistent deferred tasks (NEVER purge) |
+| `cb-notes` | shared team knowledge: workers' findings + orchestrator decisions, `schemas/notes.json` (NEVER purge) |
 
 ## Key design invariants
 
@@ -114,3 +115,7 @@ REST: `GET /health`, `GET /inbox` (optional `wait_ms` long-poll), `POST /inbox/b
 - Purge requires `AskUserQuestion` — no exceptions, no token bypass
 - Channel schemas live in SQLite — hot-reload, no broker restart needed
 - `wait_for_messages` is server-side long-poll (max 60s) — prefer over polling
+- Sessions share nothing but the broker and git. Cross-session knowledge travels three ways only:
+  the task envelope (`context`/`background`), `*-notes` findings/decisions, and `handoff_notes` on
+  a rotating worker's last status (the fresh session resumes from them). `get_task_ledger` derives
+  the orchestrator's ledger server-side so it is never rebuilt from message archaeology.

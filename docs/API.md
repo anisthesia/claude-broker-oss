@@ -85,6 +85,7 @@ Schemas are stored in SQLite and hot-reloaded — no restart needed.
 | `sprint_summary` | Roll up dispatched/completed/failed/pending task counts for a status channel. Counts distinct `task_id`s; a task is judged by its latest result, so a retry that passes after a FAIL is one completed task. For `<ns>-status` the dispatched count covers `<ns>-*` inbox channels; for a bare `status` it covers every channel. |
 | `sprint_file_conflicts` | Detect workers touching overlapping files (from result metadata). |
 | `open_questions` | List `type: question` messages under a namespace prefix that have no later reply on the asker's inbox and no self-posted result — surfaces blocked workers at orchestrator turn-start. |
+| `get_task_ledger` | One row per task for a namespace, derived server-side: every `type: task` dispatched into `<ns>-*` inboxes joined with the latest result, latest status/handoff and any open question per `task_id`. `state` is `pending`, `in-progress` (a status was posted), `handoff` (the status carries `body.handoff_notes` or is `type: handoff`), `blocked` (open question), or `done` / `failed` / `skipped` from the latest result's summary prefix. Results with no dispatch are listed with `dispatched_at: null`. `only_open=true` drops finished rows; `since_id` bounds the dispatch scan; `prefix` and `workers` let a cluster orchestrator whose status channel is `<ns>-<cluster>-status` scan the `<ns>-*` inboxes for its own workers only. Replaces rebuilding the orchestrator's ledger from `read_messages`. |
 
 ### Worker supervision (opt-in)
 

@@ -215,6 +215,7 @@ async function registerSchemas({ port, secret, ns, components, reviewer, strict,
     [`${ns}-control`, "control.json"],
     [`${ns}-backlog`, "backlog.json"],
     [`${ns}-sprint-retrospective`, "backlog.json"],
+    [`${ns}-notes`, "notes.json"],
     ...components.map((comp) => [`${ns}-${comp}`, "worker-inbox.json"]),
     ...patrols.map((p) => [`${ns}-${p.name}`, "worker-inbox.json"]),
     ...(clusters || []).flatMap((cl) => [
@@ -269,7 +270,7 @@ You plan the work, split it into tasks, dispatch them to workers, watch for resu
 conflicts, and gate merges. You do **NOT** write feature code yourself — you coordinate.
 
 The broker MCP server is wired into your session (\`http://localhost:${port}/mcp\`); its tools are
-available (\`send_message\`, \`read_messages\`, \`wait_for_messages\`, \`check_result\`, \`sprint_summary\`, …).
+available (\`send_message\`, \`read_messages\`, \`wait_for_messages\`, \`check_result\`, \`get_task_ledger\`, \`sprint_summary\`, …).
 
 ## Worker registry
 
@@ -285,17 +286,29 @@ ${direct.length ? `- ${dispatch} — worker inboxes (dispatch tasks here)\n` : "
 - \`${ns}-telemetry\` — heartbeats (monitor for liveness with \`get_latest_heartbeats\`)
 - \`${ns}-backlog\` — persistent deferred tasks — **NEVER purge**
 - \`${ns}-sprint-retrospective\` — permanent sprint history — **NEVER purge**
+- \`${ns}-notes\` — shared team knowledge: workers' findings + your decisions (matches \`schemas/notes.json\`) — **NEVER purge**
 ${clusterSection}
 ## Turn-start ritual
 
 On the first turn of a session use \`since_id=0\` for every channel; remember the highest id seen
 per channel and persist it across turns. Then, every turn:
 
-1. \`read_messages(channel="${ns}-orchestrator", since_id=<last>)\` — your inbox.
-2. \`read_messages(channel="${ns}-status", since_id=<last>)\` — new results, questions, blockers.
-3. Update your task ledger (\`task_id → {worker, status, blockers}\`) from any \`type: result\`.
-4. Answer any \`type: question\` addressed to you **first** — that worker is blocked until you do.
-5. Worker health: if a result is overdue, \`list_workers\`; if the worker is stopped with a pending
+1. \`get_task_ledger(status_channel="${ns}-status", only_open=true)\` — the server derives one row per
+   task (\`pending\` / \`in-progress\` / \`handoff\` / \`blocked\` / \`done\` / \`failed\` / \`skipped\`) from
+   dispatches, results, statuses and open questions. This IS your ledger — do not rebuild it by
+   reading \`${ns}-status\` from id 0 after a rotation.
+2. \`read_messages(channel="${ns}-orchestrator", since_id=<last>)\` — your inbox.
+3. \`read_messages(channel="${ns}-status", since_id=<last>, projection="summary")\` — new results,
+   questions, blockers; open a message in full only when the summary is not enough.
+4. Answer any \`blocked\` task's question **first** (\`open_question.expected_reply_channel\` tells you
+   where) — that worker is blocked until you do.
+5. \`handoff\` rows: a worker rotated mid-task and left \`handoff_notes\` on \`${ns}-status\`. The task is
+   still in its inbox; the fresh session resumes from the notes. Re-dispatch only if the worker
+   is stopped or the notes say the approach failed.
+6. \`read_messages(channel="${ns}-notes", since_id=<last>, projection="summary")\` — new findings
+   from workers. Fold anything relevant into the \`background\` of the next task that touches that
+   scope; post a \`type: resolved\` when a finding is fixed or no longer applies.
+7. Worker health: if a result is overdue, \`list_workers\`; if the worker is stopped with a pending
    inbox, \`start_worker\` it (\`node check-worker-health.js --fix\` starts all stalled workers).
 
 ## Dispatching a task
@@ -333,12 +346,23 @@ Field discipline:
 - **\`acceptance_criteria\`** always, and embed the same checklist in \`body\`. The worker confirms
   every item before posting \`type: result\`; if any is incomplete it posts \`type: question\`.
 - **\`constraints\`** / **\`files.write\`** — hard limits the worker must obey.
+- **\`background\`** is where shared knowledge travels: prior decisions, what failed last time, and any
+  open \`${ns}-notes\` finding whose \`scope\` overlaps \`files.write\`. Workers start every session
+  blank — if it is not in the envelope or on \`${ns}-notes\`, they do not know it.
+
+## Recording decisions
+
+When you choose between approaches, defer something, or learn a constraint the team must respect,
+post a \`type: decision\` to \`${ns}-notes\` (\`subject\`, one-or-two-sentence \`summary\` with the reason,
+\`scope\`, \`to: "*"\`). Workers read the channel at cold start, so a decision posted once reaches
+every future session without being re-typed into task bodies.
 
 ## Collecting results & gating the sprint
 
 - \`check_result(channel="${ns}-status", task_id="…")\` — one task's latest result.
 - \`check_results_batch(channel="${ns}-status", task_ids=[…])\` — many at once.
-- \`sprint_summary(status_channel="${ns}-status")\` — dispatched/completed/failed/pending counts.
+- \`sprint_summary(status_channel="${ns}-status")\` — dispatched/completed/failed/pending counts;
+  \`get_task_ledger\` for the per-task detail behind them.
 - **Verify before closing**: when a result arrives, confirm the body satisfies every
   \`acceptance_criteria\` item. If any is missing, dispatch a continuation task — do NOT close it.
 - **Before merging**: \`sprint_file_conflicts(status_channel="${ns}-status")\` — if two workers
@@ -350,7 +374,8 @@ ${reviewer ? `- **Review gate**: before any sprint-close merge, dispatch a revie
 ` : ""}- **Sprint close**: once results pass${reviewer ? " and the reviewer approves" : ""}, merge each worker branch with
   \`sprint-close-merge.sh\` (the setup output printed the exact command). Then post a sprint
   retrospective to \`${ns}-sprint-retrospective\` (tasks completed, deferred items) and move open
-  items to \`${ns}-backlog\` before purging any channels.
+  items to \`${ns}-backlog\` before purging any channels. Never purge \`${ns}-notes\`; close stale
+  findings there with \`type: resolved\` instead.
 
 ## Rules
 
@@ -399,11 +424,16 @@ ${gitSection}
 - \`${ns}-control\` — orchestrator broadcasts (check every turn)
 - \`${status}\` — post all results + status here${status === `${ns}-status` ? "" : ` (your cluster's feed; \`${ns}-status\` is cross-cluster — don't post results there)`}
 - \`${ns}-telemetry\` — post heartbeats here
+- \`${ns}-notes\` — shared team knowledge (findings + decisions, matches \`schemas/notes.json\`); read at cold start, post to when you learn something outside your own scope
 
 ## Cold start (first turn of a session)
 
-Advertise what you own, once per session:
-\`register_capability(worker="${worker}", owns=["${worker}"], channels=["${ns}-${worker}", "${status}", "${ns}-telemetry"])\`
+You start with an empty context every session. Two calls bring you up to date:
+
+1. \`register_capability(worker="${worker}", owns=["${worker}"], channels=["${ns}-${worker}", "${status}", "${ns}-telemetry"])\` — advertise what you own.
+2. \`read_messages(channel="${ns}-notes", since_id=0, projection="summary")\` — team knowledge. Open in
+   full only the notes whose \`to\` is you or \`*\` and whose \`scope\` overlaps the files you are about
+   to touch; ignore ones closed by a later \`type: resolved\` or past their \`expires_at\`.
 
 ## Turn-start ritual
 
@@ -422,6 +452,10 @@ Advertise what you own, once per session:
      (per-task do-NOTs — obey even when they conflict with your defaults), \`files.write\` (modify only
      these), \`scope\`, \`checks\` (run each, verify its \`pass_condition\`), \`acceptance_criteria\`
      (confirm every item in your result; if any can't be met, post \`type: question\`, not a result).
+   - **Resume a handoff**: \`read_last(channel="${status}", n=10, projection="summary")\` — if the newest
+     \`type: status\` from \`${worker}\` carries \`body.handoff_notes\` for THIS task_id, a previous session
+     of you rotated mid-task. Open that message in full and continue from its notes (what is done,
+     what is pending, files touched) instead of starting over; uncommitted work is on your branch.
 5. A \`type: question\` addressed to you → answer it, then continue.
 
 ## Doing the work & committing
@@ -461,6 +495,21 @@ Post to \`${status}\` (matches \`schemas/${status === `${ns}-status` ? "status" 
   \`"terminal-human"\` / \`"approval-token:#<msg_id>"\` / \`"orchestrator-dispatch-only"\`.
 - Put verbose output in \`/tmp/<task_id>-<check>.txt\` and reference it as \`body.output_ref\`.
 
+## Sharing what you learn
+
+Your context dies with the session; the team's does not have to. When you learn something that
+another worker or a future session needs — a bug in code you do not own, a constraint that is not
+in any file, a workaround with a shelf life — post a \`type: finding\` to \`${ns}-notes\`:
+
+\`\`\`json
+{ "type": "finding", "from": "${worker}", "to": "<worker it concerns or *>", "subject": "<headline, ≤120 chars>",
+  "summary": "<one or two sentences: the claim>", "scope": ["<file or dir>"], "evidence": "<command + output tail, or sha>",
+  "confidence": "confirmed", "task_id": "<current task_id>" }
+\`\`\`
+
+Not a substitute for a \`type: question\` (which blocks you) or a result. Do not post what a test
+already proves or what git history already records. Never purge \`${ns}-notes\`.
+
 ## Idle — drain and exit (do NOT idle-poll)
 
 You run on demand: the watchdog starts you only when work is waiting. After posting a result:
@@ -477,9 +526,17 @@ session that picks it up with a clean context.
 ## Rotation protocol
 
 On a \`type: "rotate"\` message, or when your context nears its limit: finish the current sub-task
-(post its result/status), post a \`type: status\` to \`${status}\` with \`handoff_notes\` (current
-task_id, done vs pending, files touched), then **exit**. The watchdog restarts you; the new session
-resumes from broker state.
+(post its result/status), commit or stash anything half-done on your branch, then post a
+\`type: status\` to \`${status}\` as the **last message before you exit**:
+
+\`\`\`json
+{ "type": "status", "task_id": "<in-flight task_id>", "from": "${worker}", "to": "${orch}",
+  "subject": "rotating — context at <N>k",
+  "body": { "handoff_notes": { "done": ["..."], "pending": ["..."], "files_touched": ["..."], "next_step": "..." } } }
+\`\`\`
+
+Then **exit**. The watchdog restarts you; the task is still in your inbox, and the fresh session finds
+these notes in the turn-start "Resume a handoff" step and continues from them.
 `;
 }
 
@@ -503,6 +560,8 @@ The broker MCP server is wired into your session (\`http://localhost:${port}/mcp
 - \`${ns}-control\` — orchestrator broadcasts (check every turn)
 - \`${ns}-status\` — post all findings + results here
 - \`${ns}-telemetry\` — post heartbeats here
+- \`${ns}-notes\` — shared team knowledge; post a \`type: finding\` there (matches \`schemas/notes.json\`) for
+  anything you notice that is outside the review's scope but a future task should know
 
 ## Turn-start ritual
 
@@ -995,7 +1054,7 @@ async function main() {
   const prevPrune = existsSync(envPath)
     ? (readFileSync(envPath, "utf8").match(/^PRUNE_EXEMPT=(.*)$/m)?.[1] || "").split(",").map((s) => s.trim()).filter(Boolean)
     : [];
-  const pruneExempt = [...new Set([...prevPrune, `${ns}-backlog`, `${ns}-sprint-retrospective`])].join(",");
+  const pruneExempt = [...new Set([...prevPrune, `${ns}-backlog`, `${ns}-sprint-retrospective`, `${ns}-notes`])].join(",");
   // Anything the wizard does not manage (PRUNE_MAX_AGE_MS, WORKERS_LOG_DIR, DB tuning, …) is
   // carried over verbatim, so a re-run — interactive or --yes — never silently drops settings.
   const MANAGED_ENV = new Set(["PORT", "SHARED_SECRET", "DB_PATH", "TELEMETRY_CHANNEL", "RATE_LIMIT_CHANNEL", "PRUNE_EXEMPT", "WORKERS_CONFIG", "WATCHDOG_BIN", "WORKERS_TMUX_SESSION", "TMUX_BIN"]);
@@ -1180,7 +1239,7 @@ async function main() {
     ...patrols.map((p) => `${ns}-${p.name}`),
     ...(clusters || []).flatMap((cl) => [`${ns}-${cl.name}-orch`, `${ns}-${cl.name}-status`]),
     ...(opts.reviewer ? [`${ns}-reviewer`] : []),
-    `${ns}-backlog`, `${ns}-sprint-retrospective`,
+    `${ns}-backlog`, `${ns}-sprint-retrospective`, `${ns}-notes`,
   ];
   line();
   line(c.g("✓ Setup complete"));

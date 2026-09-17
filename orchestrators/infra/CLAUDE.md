@@ -41,19 +41,29 @@ root. The broker MCP server is wired into your session (tools: `mcp__broker__*`)
 - `cb-status` — firehose: workers post status + results here (monitor this)
 - `cb-telemetry` — heartbeats (monitor for liveness)
 - `cb-backlog` — persistent deferred tasks — **NEVER purge**
+- `cb-notes` — shared team knowledge: workers' findings + your decisions (`schemas/notes.json`) — **NEVER purge**
 
 ## Turn-start ritual
 
 At the start of every user turn, before doing anything else:
 
-1. `read_messages(channel="cb-orchestrator", since_id=<last>)` — your inbox
-2. `has_messages(channel="cb-control", since_id=<last_control_id>)` → if pending,
+1. `get_task_ledger(status_channel="cb-status", only_open=true)` — the server derives one row
+   per task (`pending` / `in-progress` / `handoff` / `blocked` / `done` / `failed` / `skipped`)
+   from dispatches, results, statuses and open questions. This IS your task ledger — never
+   rebuild it by reading `cb-status` from id 0 after a rotation.
+2. `read_messages(channel="cb-orchestrator", since_id=<last>)` — your inbox
+3. `has_messages(channel="cb-control", since_id=<last_control_id>)` → if pending,
    `read_messages(channel="cb-control", ...)` to pick up any prior broadcasts
-3. `read_messages(channel="cb-status", since_id=<last_status_id>)` — new results
-4. Update task ledger from any `type: result` or `type: status` messages found
-5. If any worker posted `type: question` addressed to you, answer it first —
-   that worker is blocked
-6. Client worker health check (run when any dv-/rp-/dx- sprint is active):
+4. `read_messages(channel="cb-status", since_id=<last_status_id>, projection="summary")` — new
+   results; open a message in full only when the summary is not enough
+5. Answer any `blocked` task's question first (`open_question.expected_reply_channel` says
+   where) — that worker is blocked. `handoff` rows mean a worker rotated mid-task and left
+   `handoff_notes`; the task is still in its inbox and the fresh session resumes from them —
+   re-dispatch only if the worker is stopped or the notes say the approach failed
+6. `read_messages(channel="cb-notes", since_id=<last_notes_id>, projection="summary")` — new
+   findings from workers. Fold relevant ones into the `background` of the next task touching
+   that scope; post `type: resolved` (`ref_id`, `outcome`) when a finding is fixed or moot
+7. Client worker health check (run when any dv-/rp-/dx- sprint is active):
    a. `read_messages` on `dv-status` and `rp-status` (since last seen id) — look for
       `type: question` with subject containing "depends_on" or "blocked"
    b. For each such question: call `list_workers` — if the prerequisite worker is
@@ -109,7 +119,10 @@ Use this envelope shape (JSON string in `content`):
 
 - `task_id` format: `cb-2026-06-10-validator-strict` (date + slug)
 - `context` — always include; one sentence on the motivation
-- `background` — optional; 2-3 sentences on prior decisions or failures that inform this task
+- `background` — optional; 2-3 sentences on prior decisions or failures that inform this task.
+  This is where shared knowledge travels: workers start every session blank, so anything not in
+  the envelope or on `cb-notes` is unknown to them. Include any open `cb-notes` finding whose
+  `scope` overlaps `files.write`
 - `scope` — always include: `"small"` (<30 min), `"medium"` (30-90 min), `"large"` (>90 min, worker should plan for context rotation)
 - `constraints` — per-task "do NOT" rules; worker must obey every item even when they conflict with defaults
 - `files.write` — list the specific files this task should modify; prevents cross-file contamination
@@ -125,6 +138,13 @@ Use this envelope shape (JSON string in `content`):
   For read/advisory tasks: omit `"committed"`.
 - When a task touches `server.js` and also needs a schema, sequence them:
   dispatch core first, then protocol-qa with `depends_on: ["<core-task>:core"]`.
+
+## Recording decisions
+
+When you choose between approaches, defer something, or learn a constraint the team must respect,
+post a `type: decision` to `cb-notes` (`subject`, one-or-two-sentence `summary` with the reason,
+`scope`, `to: "*"`). Workers read `cb-notes` at cold start, so a decision posted once reaches every
+future session without being re-typed into task bodies.
 
 ## Sprint lifecycle
 
@@ -201,7 +221,8 @@ Use this envelope shape (JSON string in `content`):
    open tasks being deferred, cost snapshot from `get_latest_per_sender("cb-telemetry")`)
 7. Dispatch deferred items to `cb-backlog` before purging
 8. Purge: `cb-core`, `cb-protocol-qa`, `cb-orchestrator`, `cb-control`,
-   `cb-status`, `cb-telemetry`. **Never purge `cb-backlog`.**
+   `cb-status`, `cb-telemetry`. **Never purge `cb-backlog` or `cb-notes`** — close stale
+   findings on `cb-notes` with `type: resolved` instead.
 
 ### Schema migration sequencing
 

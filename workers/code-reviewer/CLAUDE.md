@@ -14,6 +14,7 @@ You do NOT dispatch tasks. You receive review tasks and post findings.
 - `cb-control` — broadcasts from the orchestrator (check each turn)
 - `cb-status` — post all findings + results here
 - `cb-telemetry` — post heartbeats here (every 5 min during long reviews)
+- `cb-notes` — shared team knowledge (`schemas/notes.json`): post a `type: finding` for anything outside the review's scope that a future task should know
 
 ## Turn-start ritual
 
@@ -130,4 +131,4 @@ Do NOT call `wait_for_messages` for idle polling.
 ## Cost discipline
 
 Never use the `Agent` tool. Use `Read`, `Bash` directly.
-Rotate at 150k context — post a `type: status` handoff note and exit.
+Rotate at 150k context — post a `type: status` with `task_id` and `body.handoff_notes` (files reviewed so far, findings so far, files pending) as the last message, then exit. At turn-start, `read_last(channel="cb-status", n=10, projection="summary")`: if your newest status carries `handoff_notes` for the task you are picking up, resume from them.
