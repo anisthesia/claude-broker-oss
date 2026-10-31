@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ca-orchestrator-inbox envelope",
+  "description": "Messages sent into the ca-orchestrator inbox — escalations, questions, and notes from workers (contracts, money-core, bank, inventory-risk, identity-notify, android, console, quality, reviewer) and the human.",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["question", "note", "status", "task", "consent-grant", "consent-deny", "answer"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sending worker: 'contracts', 'money-core', 'bank', 'inventory-risk', 'identity-notify', 'android', 'console', 'quality', 'reviewer', or 'human'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Should be 'orchestrator' or 'ca-orch'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "additionalProperties": false
+}

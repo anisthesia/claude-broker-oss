@@ -1,0 +1,88 @@
+{
+  "name": "@anisthesia/claude-broker",
+  "version": "2.2.1",
+  "description": "A persistent, schema-enforced message bus for Claude Code (or any MCP client) sessions that must outlive a single run — durable channels, long-poll, human-consent gates, and an audit trail for long-lived orchestrator/worker setups.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Anis Khan (https://github.com/anisthesia)",
+  "homepage": "https://github.com/anisthesia/claude-broker-oss#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anisthesia/claude-broker-oss.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anisthesia/claude-broker-oss/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "message-broker",
+    "multi-agent",
+    "agent-coordination",
+    "sqlite",
+    "pub-sub"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "server.js",
+  "bin": {
+    "claude-broker": "server.js",
+    "claude-broker-setup": "setup.js"
+  },
+  "files": [
+    "server.js",
+    "lib/",
+    "setup.js",
+    "retro/",
+    "hooks/",
+    "watchdog.sh",
+    "worktree-setup.sh",
+    "sprint-close-merge.sh",
+    "schemas/README.md",
+    "schemas/base/",
+    "schemas/manifest.schema.json",
+    "schemas/manifests/",
+    "schemas/backlog.json",
+    "schemas/cluster-status.json",
+    "schemas/control.json",
+    "schemas/reviewer-inbox.json",
+    "schemas/status.json",
+    "schemas/telemetry.json",
+    "schemas/worker-inbox.json",
+    "docs/",
+    ".env.example",
+    "workers.example.json",
+    "README.md",
+    "CUSTOMER-SETUP.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "setup": "node setup.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node run-tests.js",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.312",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "zod": "^3.23.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "zod": "$zod"
+    }
+  }
+}

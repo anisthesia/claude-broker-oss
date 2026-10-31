@@ -1,0 +1,999 @@
+{
+  "ns": "cb",
+  "version": "3.0",
+  "strict": false,
+  "closed": true,
+  "plan_gate": true,
+  "roles": {
+    "reviewer": {
+      "summary_prefixes": [
+        "APPROVE",
+        "ADVISE",
+        "BLOCK"
+      ]
+    },
+    "orchestrator": {
+      "extensions": {
+        "task": {
+          "required": [
+            "scope",
+            "acceptance_criteria"
+          ]
+        }
+      }
+    }
+  },
+  "workers": [
+    {
+      "name": "orchestrator",
+      "inbox": "cb-orchestrator",
+      "role": "orchestrator"
+    },
+    {
+      "name": "core",
+      "inbox": "cb-core",
+      "role": "worker"
+    },
+    {
+      "name": "protocol-qa",
+      "inbox": "cb-protocol-qa",
+      "role": "worker"
+    },
+    {
+      "name": "retro",
+      "inbox": "cb-retro",
+      "role": "worker"
+    },
+    {
+      "name": "judge",
+      "inbox": "cb-judge",
+      "role": "worker"
+    },
+    {
+      "name": "reviewer",
+      "inbox": "cb-reviewer",
+      "role": "reviewer"
+    }
+  ],
+  "channels": [
+    {
+      "name": "cb-core",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "plan-decision"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            },
+            "context": {
+              "minLength": 1
+            },
+            "background": {
+              "minLength": 1
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "summary": false,
+            "affected_files": false
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-protocol-qa",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "plan-decision"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            },
+            "context": {
+              "minLength": 1
+            },
+            "background": {
+              "minLength": 1
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "summary": false,
+            "affected_files": false
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-retro",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "plan-decision"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            },
+            "context": {
+              "minLength": 1
+            },
+            "background": {
+              "minLength": 1
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "summary": false,
+            "affected_files": false
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-judge",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            },
+            "context": {
+              "minLength": 1
+            },
+            "background": {
+              "minLength": 1
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          },
+          "properties": {
+            "summary": false,
+            "affected_files": false
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^cb-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-orchestrator",
+      "kind": "orchestrator-inbox",
+      "types": [
+        "question",
+        "note",
+        "status"
+      ],
+      "extensions": {
+        "question": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "note": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "status": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cb-control",
+      "kind": "control",
+      "types": [
+        "sprint-start",
+        "note",
+        "approval-token",
+        "approval-revoke",
+        "rotate",
+        "contract-change"
+      ]
+    },
+    {
+      "name": "cb-status",
+      "kind": "status",
+      "types": [
+        "status",
+        "result",
+        "question",
+        "note",
+        "handoff",
+        "plan"
+      ],
+      "extensions": {
+        "note": {
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "affected_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "handoff": {
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "affected_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-telemetry",
+      "kind": "telemetry",
+      "types": [
+        "heartbeat"
+      ]
+    },
+    {
+      "name": "cb-reviewer",
+      "kind": "worker-inbox",
+      "types": [
+        "task"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "from",
+            "to",
+            "subject"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "depends_on",
+            "context",
+            "files",
+            "checks"
+          ],
+          "properties": {
+            "body": {
+              "required": [
+                "base",
+                "head",
+                "checklist"
+              ],
+              "properties": {
+                "base": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "head": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "checklist": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-backlog",
+      "kind": "backlog",
+      "types": [
+        "task",
+        "result",
+        "note",
+        "status",
+        "question",
+        "retrospective",
+        "deferred",
+        "deferred-resolved"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "result": {
+          "required": [
+            "body"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to",
+            "summary"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "note": {
+          "required": [
+            "body"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "status": {
+          "required": [
+            "body"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "question": {
+          "required": [
+            "body"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cb-held",
+      "kind": "backlog",
+      "types": [
+        "held-task",
+        "held-release"
+      ]
+    },
+    {
+      "name": "cb-notes",
+      "kind": "notes",
+      "types": [
+        "finding",
+        "decision",
+        "resolved",
+        "judgment"
+      ]
+    }
+  ],
+  "local_types": {
+    "note": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "handoff": {},
+    "rotate": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "approval-revoke": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "contract-change": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "sprint-start": {
+      "required": [
+        "sprint_id"
+      ],
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "retrospective": {
+      "envelope": false,
+      "required": [
+        "type",
+        "sprint",
+        "dates",
+        "workers",
+        "tasks"
+      ],
+      "properties": {
+        "sprint": {
+          "type": "string"
+        },
+        "dates": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "workers": {
+          "type": [
+            "array",
+            "object"
+          ]
+        },
+        "tasks": {
+          "type": [
+            "array",
+            "object"
+          ]
+        },
+        "key_metrics": {
+          "type": "object"
+        },
+        "backlog_deferred": {
+          "type": "array"
+        }
+      },
+      "closed": false
+    },
+    "held-task": {
+      "required": [
+        "body"
+      ],
+      "properties": {
+        "body": {
+          "type": "object",
+          "required": [
+            "task"
+          ],
+          "properties": {
+            "task": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "held-release": {
+      "required": [
+        "released_at",
+        "target_channel"
+      ],
+      "properties": {
+        "released_at": {
+          "type": "string"
+        },
+        "target_channel": {
+          "type": "string"
+        }
+      }
+    },
+    "judgment": {
+      "required": [
+        "verdict",
+        "question_ref",
+        "summary"
+      ],
+      "properties": {
+        "from": {
+          "const": "judge"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "verdict": {
+          "enum": [
+            "decided",
+            "returned",
+            "held"
+          ]
+        },
+        "question_ref": {
+          "type": "string",
+          "pattern": "^cb-status#[0-9]+$"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "basis": {
+          "type": "string",
+          "pattern": "^(cb-notes#[0-9]+|docs/knowledge/cb\\.md#.+|CLAUDE\\.md:.+)$"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "decided"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "required": [
+              "basis"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "extensions": {
+    "finding": {
+      "required": [
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 20
+        },
+        "evidence": {
+          "maxLength": 1000
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "suspected"
+          ]
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decision": {
+      "required": [
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 20
+        },
+        "evidence": {
+          "maxLength": 1000
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "suspected"
+          ]
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resolved": {
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "maxLength": 400
+        },
+        "outcome": {
+          "enum": [
+            "fixed",
+            "superseded",
+            "invalid",
+            "expired"
+          ]
+        }
+      }
+    },
+    "heartbeat": {
+      "required": [
+        "ts",
+        "context",
+        "activity"
+      ],
+      "properties": {
+        "context": {
+          "required": [
+            "size_tokens",
+            "tier_threshold_pct",
+            "rotation_recommended"
+          ]
+        },
+        "activity": {
+          "properties": {
+            "state": {
+              "enum": [
+                "working",
+                "idle-polling",
+                "blocked-on-question",
+                "rotating",
+                "idle-exit",
+                "session-end",
+                "reviewing",
+                "coverage-patrol"
+              ]
+            },
+            "last_tool_call_ts": true,
+            "current_task_id": true,
+            "exit_code": true,
+            "last_action": false
+          },
+          "additionalProperties": false
+        },
+        "at": false,
+        "state": false
+      }
+    },
+    "deferred": {
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "deferred"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "deferred_reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type",
+              "body"
+            ],
+            "properties": {
+              "type": {
+                "const": "deferred-resolved"
+              },
+              "body": {
+                "type": "object"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "required": [
+                  "resolved_in_sprint",
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "promoted",
+                      "cancelled",
+                      "superseded"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "approval-token": {
+      "required": [
+        "body"
+      ],
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

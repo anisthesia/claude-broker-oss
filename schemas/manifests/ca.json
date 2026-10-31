@@ -1,0 +1,1747 @@
+{
+  "ns": "ca",
+  "version": "3.0",
+  "strict": false,
+  "closed": true,
+  "roles": {
+    "reviewer": {
+      "summary_prefixes": [
+        "APPROVE",
+        "ADVISE",
+        "BLOCK",
+        "PARTIAL"
+      ]
+    }
+  },
+  "workers": [
+    {
+      "name": "orchestrator",
+      "inbox": "ca-orchestrator",
+      "role": "orchestrator"
+    },
+    {
+      "name": "contracts",
+      "inbox": "ca-contracts",
+      "role": "worker"
+    },
+    {
+      "name": "money-core",
+      "inbox": "ca-money-core",
+      "role": "worker"
+    },
+    {
+      "name": "bank",
+      "inbox": "ca-bank",
+      "role": "worker"
+    },
+    {
+      "name": "inventory-risk",
+      "inbox": "ca-inventory-risk",
+      "role": "worker"
+    },
+    {
+      "name": "identity-notify",
+      "inbox": "ca-identity-notify",
+      "role": "worker"
+    },
+    {
+      "name": "android",
+      "inbox": "ca-android",
+      "role": "worker"
+    },
+    {
+      "name": "console",
+      "inbox": "ca-console",
+      "role": "worker"
+    },
+    {
+      "name": "quality",
+      "inbox": "ca-quality",
+      "role": "worker"
+    },
+    {
+      "name": "judge",
+      "inbox": "ca-judge",
+      "role": "worker",
+      "mode": "hold"
+    },
+    {
+      "name": "reviewer",
+      "inbox": "ca-reviewer",
+      "role": "reviewer"
+    }
+  ],
+  "channels": [
+    {
+      "name": "ca-orchestrator",
+      "kind": "orchestrator-inbox",
+      "types": [
+        "question",
+        "note",
+        "status",
+        "task",
+        "consent-grant",
+        "consent-deny",
+        "answer"
+      ],
+      "extensions": {
+        "question": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "note": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "status": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "task": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "consent-grant": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "consent-deny": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "answer": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "ca-control",
+      "kind": "control",
+      "types": [
+        "sprint-start",
+        "note",
+        "approval-token",
+        "approval-revoke",
+        "rotate",
+        "contract-change",
+        "reload"
+      ],
+      "extensions": {
+        "approval-token": {
+          "required": [
+            "body"
+          ]
+        }
+      }
+    },
+    {
+      "name": "ca-status",
+      "kind": "status",
+      "types": [
+        "status",
+        "result",
+        "question",
+        "note",
+        "handoff"
+      ]
+    },
+    {
+      "name": "ca-telemetry",
+      "kind": "telemetry",
+      "types": [
+        "heartbeat"
+      ]
+    },
+    {
+      "name": "ca-backlog",
+      "kind": "backlog",
+      "types": [
+        "task",
+        "result",
+        "note",
+        "status",
+        "question",
+        "retrospective",
+        "deferred",
+        "deferred-resolved"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "result": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to",
+            "summary"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "note": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "status": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "question": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-sprint-retrospective",
+      "kind": "backlog",
+      "types": [
+        "task",
+        "result",
+        "note",
+        "status",
+        "question",
+        "retrospective",
+        "deferred",
+        "deferred-resolved"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "result": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to",
+            "summary"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "note": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "status": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "question": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-notes",
+      "kind": "notes",
+      "types": [
+        "finding",
+        "decision",
+        "resolved",
+        "judgment"
+      ]
+    },
+    {
+      "name": "ca-reviewer",
+      "kind": "worker-inbox",
+      "types": [
+        "task"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "from",
+            "to",
+            "subject"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "depends_on",
+            "context",
+            "files",
+            "checks"
+          ],
+          "properties": {
+            "body": {
+              "required": [
+                "base",
+                "head",
+                "checklist"
+              ],
+              "properties": {
+                "base": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "head": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "checklist": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-contracts",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-money-core",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-bank",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-inventory-risk",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-identity-notify",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-android",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-console",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-quality",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate",
+        "reload",
+        "contract-change",
+        "peer-notify",
+        "peer-ack",
+        "peer-ack-request",
+        "peer-conflict-check",
+        "peer-conflict-reply"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "reload": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "contract-change": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-notify": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-ack-request": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-check": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "peer-conflict-reply": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    },
+    {
+      "name": "ca-judge",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate"
+      ],
+      "extensions": {
+        "task": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          },
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "note": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        },
+        "rotate": {
+          "patterns": {
+            "task_id": "^ca-\\d{4}-\\d{2}-\\d{2}-.+"
+          }
+        }
+      }
+    }
+  ],
+  "local_types": {
+    "note": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "rotate": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "reload": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "approval-revoke": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "contract-change": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        },
+        "wire_compat": {
+          "enum": [
+            "additive",
+            "breaking"
+          ]
+        }
+      }
+    },
+    "sprint-start": {
+      "required": [
+        "sprint_id"
+      ],
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "handoff": {},
+    "peer-notify": {},
+    "peer-ack": {},
+    "peer-ack-request": {},
+    "peer-conflict-check": {},
+    "peer-conflict-reply": {},
+    "consent-grant": {},
+    "consent-deny": {},
+    "answer": {},
+    "retrospective": {
+      "envelope": false,
+      "required": [
+        "type",
+        "sprint",
+        "dates",
+        "workers",
+        "tasks"
+      ],
+      "properties": {
+        "sprint": {
+          "type": "string"
+        },
+        "dates": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "workers": {
+          "type": [
+            "array",
+            "object"
+          ]
+        },
+        "tasks": {
+          "type": [
+            "array",
+            "object"
+          ]
+        },
+        "key_metrics": {
+          "type": "object"
+        },
+        "backlog_deferred": {
+          "type": "array"
+        }
+      },
+      "closed": false
+    },
+    "judgment": {
+      "required": [
+        "verdict",
+        "question_ref",
+        "summary"
+      ],
+      "properties": {
+        "from": {
+          "const": "judge"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "verdict": {
+          "enum": [
+            "decided",
+            "returned",
+            "held"
+          ]
+        },
+        "question_ref": {
+          "type": "string",
+          "pattern": "^ca-status#[0-9]+$"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "basis": {
+          "type": "string",
+          "pattern": "^(ca-notes#[0-9]+|docs/knowledge/ca\\.md#.+|CLAUDE\\.md:.+)$"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "decided"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "required": [
+              "basis"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "extensions": {
+    "heartbeat": {
+      "required": [
+        "ts",
+        "context",
+        "activity"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "cost_since_start": {
+          "type": "object"
+        },
+        "context": {
+          "required": [
+            "size_tokens",
+            "tier_threshold_pct",
+            "rotation_recommended"
+          ]
+        },
+        "activity": {
+          "properties": {
+            "state": {
+              "enum": [
+                "working",
+                "idle-polling",
+                "blocked-on-question",
+                "rotating",
+                "idle-exit",
+                "session-end",
+                "reviewing",
+                "coverage-patrol"
+              ]
+            },
+            "last_tool_call_ts": true,
+            "current_task_id": true,
+            "exit_code": true,
+            "last_action": false
+          },
+          "additionalProperties": false
+        },
+        "at": false,
+        "state": false
+      }
+    },
+    "finding": {
+      "required": [
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 20
+        },
+        "evidence": {
+          "maxLength": 1000
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "suspected"
+          ]
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decision": {
+      "required": [
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 20
+        },
+        "evidence": {
+          "maxLength": 1000
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "suspected"
+          ]
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resolved": {
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "maxLength": 400
+        },
+        "outcome": {
+          "enum": [
+            "fixed",
+            "superseded",
+            "invalid",
+            "expired"
+          ]
+        }
+      }
+    },
+    "deferred": {
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "deferred"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "deferred_reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type",
+              "body"
+            ],
+            "properties": {
+              "type": {
+                "const": "deferred-resolved"
+              },
+              "body": {
+                "type": "object"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "required": [
+                  "resolved_in_sprint",
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "promoted",
+                      "cancelled",
+                      "superseded"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,846 @@
+{
+  "ns": "pg",
+  "version": "3.0",
+  "strict": false,
+  "closed": true,
+  "roles": {
+    "reviewer": {
+      "summary_prefixes": [
+        "APPROVE",
+        "ADVISE",
+        "BLOCK"
+      ]
+    }
+  },
+  "workers": [
+    {
+      "name": "orchestrator",
+      "inbox": "pg-orchestrator",
+      "role": "orchestrator"
+    },
+    {
+      "name": "core",
+      "inbox": "pg-core",
+      "role": "worker"
+    },
+    {
+      "name": "devops",
+      "inbox": "pg-devops",
+      "role": "worker"
+    },
+    {
+      "name": "reviewer",
+      "inbox": "pg-reviewer",
+      "role": "reviewer"
+    }
+  ],
+  "channels": [
+    {
+      "name": "pg-orchestrator",
+      "kind": "orchestrator-inbox",
+      "types": [
+        "question",
+        "note",
+        "status"
+      ],
+      "extensions": {
+        "question": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "note": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        },
+        "status": {
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "refs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pg-control",
+      "kind": "control",
+      "types": [
+        "sprint-start",
+        "note",
+        "approval-token",
+        "approval-revoke",
+        "rotate",
+        "contract-change"
+      ],
+      "extensions": {
+        "approval-token": {
+          "required": [
+            "body"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pg-status",
+      "kind": "status",
+      "types": [
+        "status",
+        "result",
+        "question",
+        "note",
+        "handoff"
+      ]
+    },
+    {
+      "name": "pg-telemetry",
+      "kind": "telemetry",
+      "types": [
+        "heartbeat"
+      ]
+    },
+    {
+      "name": "pg-backlog",
+      "kind": "backlog",
+      "types": [
+        "task",
+        "result",
+        "note",
+        "status",
+        "question",
+        "retrospective",
+        "deferred",
+        "deferred-resolved"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "result": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to",
+            "summary"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "note": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "status": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "question": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pg-notes",
+      "kind": "notes",
+      "types": [
+        "finding",
+        "decision",
+        "resolved"
+      ]
+    },
+    {
+      "name": "pg-reviewer",
+      "kind": "worker-inbox",
+      "types": [
+        "task"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "from",
+            "to",
+            "subject"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "from",
+            "to",
+            "subject",
+            "body",
+            "depends_on",
+            "context",
+            "files",
+            "checks"
+          ],
+          "properties": {
+            "body": {
+              "required": [
+                "base",
+                "head",
+                "checklist"
+              ],
+              "properties": {
+                "base": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "head": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "checklist": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pg-sprint-retrospective",
+      "kind": "backlog",
+      "types": [
+        "task",
+        "result",
+        "note",
+        "status",
+        "question",
+        "retrospective",
+        "deferred",
+        "deferred-resolved"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "result": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to",
+            "summary"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "note": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "status": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        },
+        "question": {
+          "required": [
+            "body",
+            "task_id",
+            "subject",
+            "from",
+            "to"
+          ],
+          "fields": [
+            "type",
+            "task_id",
+            "subject",
+            "body",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "body": {
+              "type": "object"
+            },
+            "task_id": {
+              "minLength": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pg-core",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {},
+        "note": {},
+        "rotate": {}
+      }
+    },
+    {
+      "name": "pg-devops",
+      "kind": "worker-inbox",
+      "types": [
+        "task",
+        "question",
+        "note",
+        "rotate"
+      ],
+      "extensions": {
+        "task": {
+          "required": [
+            "body"
+          ],
+          "properties": {
+            "files": {
+              "properties": {
+                "read": true,
+                "write": true
+              },
+              "additionalProperties": false
+            },
+            "checks": {
+              "items": {
+                "properties": {
+                  "name": true,
+                  "run": true,
+                  "pass_condition": true
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "question": {},
+        "note": {},
+        "rotate": {}
+      }
+    }
+  ],
+  "local_types": {
+    "note": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "rotate": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "reload": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "approval-revoke": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "contract-change": {
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        },
+        "wire_compat": {
+          "enum": [
+            "additive",
+            "breaking"
+          ]
+        }
+      }
+    },
+    "sprint-start": {
+      "required": [
+        "sprint_id"
+      ],
+      "properties": {
+        "sprint_id": {
+          "type": "string"
+        }
+      }
+    },
+    "handoff": {},
+    "retrospective": {
+      "envelope": false,
+      "required": [
+        "type",
+        "sprint",
+        "dates",
+        "workers",
+        "tasks"
+      ],
+      "properties": {
+        "sprint": {
+          "type": "string"
+        },
+        "dates": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "workers": {
+          "type": [
+            "array",
+            "object"
+          ]
+        },
+        "tasks": {
+          "type": [
+            "array",
+            "object"
+          ]
+        },
+        "key_metrics": {
+          "type": "object"
+        },
+        "backlog_deferred": {
+          "type": "array"
+        }
+      },
+      "closed": false
+    }
+  },
+  "extensions": {
+    "heartbeat": {
+      "required": [
+        "ts",
+        "context",
+        "activity"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "cost_since_start": {
+          "type": "object"
+        },
+        "context": {
+          "required": [
+            "size_tokens",
+            "tier_threshold_pct",
+            "rotation_recommended"
+          ]
+        },
+        "activity": {
+          "properties": {
+            "state": {
+              "enum": [
+                "working",
+                "idle-polling",
+                "blocked-on-question",
+                "rotating",
+                "idle-exit",
+                "session-end",
+                "reviewing",
+                "coverage-patrol"
+              ]
+            },
+            "last_tool_call_ts": true,
+            "current_task_id": true,
+            "exit_code": true,
+            "last_action": false
+          },
+          "additionalProperties": false
+        },
+        "at": false,
+        "state": false
+      }
+    },
+    "finding": {
+      "required": [
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 20
+        },
+        "evidence": {
+          "maxLength": 1000
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "suspected"
+          ]
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decision": {
+      "required": [
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 20
+        },
+        "evidence": {
+          "maxLength": 1000
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "suspected"
+          ]
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resolved": {
+      "properties": {
+        "subject": {
+          "maxLength": 120
+        },
+        "summary": {
+          "maxLength": 400
+        },
+        "outcome": {
+          "enum": [
+            "fixed",
+            "superseded",
+            "invalid",
+            "expired"
+          ]
+        }
+      }
+    },
+    "deferred": {
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "deferred"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "deferred_reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type",
+              "body"
+            ],
+            "properties": {
+              "type": {
+                "const": "deferred-resolved"
+              },
+              "body": {
+                "type": "object"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "required": [
+                  "resolved_in_sprint",
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "promoted",
+                      "cancelled",
+                      "superseded"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

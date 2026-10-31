@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/heartbeat",
+  "title": "claude-broker base heartbeat envelope",
+  "description": "Liveness and context telemetry on <ns>-telemetry. Must accept exactly what watchdog.sh emit_heartbeat() and the in-session upsert_heartbeat produce, across every namespace: activity and context are open objects (tally adds activity.last_action, current_task_id), and the pre-v2 {type,from,at,state} shape is tolerated.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "from"
+  ],
+  "properties": {
+    "type": {
+      "const": "heartbeat"
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker identifier."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "at": {
+      "type": "string",
+      "description": "Legacy timestamp (pre-v2 heartbeats); prefer ts."
+    },
+    "state": {
+      "type": "string",
+      "description": "Legacy flat state (pre-v2); prefer activity.state."
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "size_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_create": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tier_threshold_pct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rotation_recommended": {
+          "type": "boolean"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "working",
+            "idle-polling",
+            "blocked-on-question",
+            "rotating",
+            "idle-exit",
+            "session-end",
+            "reviewing",
+            "coverage-patrol",
+            "patrol"
+          ],
+          "description": "working | idle-polling | blocked-on-question | rotating | idle-exit | session-end (watchdog, after exit) | reviewing | coverage-patrol | patrol (mg)."
+        },
+        "last_tool_call_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "current_task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_action": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer",
+          "description": "Present on watchdog session-end heartbeats."
+        }
+      }
+    },
+    "cost_since_start": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_create_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_usd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "ts"
+      ]
+    },
+    {
+      "required": [
+        "at"
+      ]
+    }
+  ],
+  "additionalProperties": true
+}

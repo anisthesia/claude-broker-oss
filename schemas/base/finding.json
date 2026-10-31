@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/finding",
+  "title": "claude-broker base finding note",
+  "description": "Durable team knowledge about code outside the poster's ownership. Lives on <ns>-notes (prune-exempt). Mirrors schemas/notes.json minus the namespace-specific closure.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "from",
+    "subject",
+    "summary",
+    "scope"
+  ],
+  "properties": {
+    "type": {
+      "const": "finding"
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker or orchestrator that posted it."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker it concerns, or '*' for the whole team."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline readable in the summary projection (cb caps it at 120 via extension)."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "description": "One or two sentences: the claim (finding) or the choice and its reason (decision)."
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Files, directories or subsystems the note is about. Array preferred; a bare string is tolerated (41 in the wild)."
+    },
+    "evidence": {
+      "type": "string",
+      "description": "How it was established: command + output tail, sha, message id."
+    },
+    "confidence": {
+      "type": "string",
+      "description": "'confirmed' (default) or 'suspected'; cb restricts to that enum via extension."
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Task during which the note was made, if any."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "refs": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/plan-decision",
+  "title": "claude-broker base plan decision",
+  "description": "The orchestrator answers a plan: approve it, amend it, or reject it. Posted to the worker inbox with the same task_id.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject",
+    "body"
+  ],
+  "properties": {
+    "type": {
+      "const": "plan-decision"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task key. Namespaces constrain the format via a manifest extension (e.g. cb-YYYY-MM-DD-<slug>)."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity (worker name, 'orchestrator', ...)."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Addressee: a worker name, 'orchestrator', or '*' for broadcast."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline, readable in the summary projection."
+    },
+    "refs": {
+      "type": "array",
+      "description": "Message ids, task_ids, commit shas, URLs."
+    },
+    "body": {
+      "type": "object",
+      "required": [
+        "decision"
+      ],
+      "properties": {
+        "decision": {
+          "enum": [
+            "approve",
+            "amend",
+            "reject"
+          ],
+          "description": "approve = proceed as planned; amend = proceed with amendments; reject = revise and re-plan."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Reasoning for the decision."
+        },
+        "amendments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Changes the worker must apply when decision is amend."
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

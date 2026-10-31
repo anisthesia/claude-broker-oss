@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/deferred",
+  "title": "claude-broker base deferred backlog entry",
+  "description": "A parked task on <ns>-backlog (prune-exempt). Also covers deferred-resolved; retrospectives are namespace-local free-form and are not a base type.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "deferred",
+        "deferred-resolved"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task key. Namespaces constrain the format via a manifest extension (e.g. cb-YYYY-MM-DD-<slug>)."
+    },
+    "from": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline, readable in the summary projection."
+    },
+    "body": {
+      "description": "String or object payload."
+    },
+    "deferred_reason": {
+      "type": "string",
+      "description": "Why the task was parked; cb requires it on type:deferred via extension."
+    },
+    "resolved_in_sprint": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

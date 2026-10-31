@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Local config & secrets
+.env
+
+# SQLite database + write-ahead-log artifacts
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime logs
+logs/
+worker-logs/
+*.log
+
+# Local worker config (copy workers.example.json → workers.json)
+workers.json
+
+# Generated per-project role files (npm run setup --scaffold-roles)
+roles/
+
+# OS / editor cruft
+.DS_Store
+
+# Per-worker runtime state written by workers/*/turn-start.js
+workers/*/.*-state.json
+
+# Per-machine Claude Code permissions
+.claude/settings.local.json
+
+# Saved alternate env files (.env.vp etc.)
+.env.*
+!.env.example
+
+# Database exports (sqlite .backup + JSON dumps)
+backups/
+
+# Generated retro output (retro/retro.mjs --envelope)
+retro/out/

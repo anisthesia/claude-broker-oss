@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/resolved",
+  "title": "claude-broker base resolved note",
+  "description": "Closes a finding or decision on <ns>-notes.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "from",
+    "subject",
+    "ref_id",
+    "outcome"
+  ],
+  "properties": {
+    "type": {
+      "const": "resolved"
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker or orchestrator that posted it."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline readable in the summary projection (cb caps it at 120 via extension)."
+    },
+    "ref_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Message id of the finding/decision this closes."
+    },
+    "outcome": {
+      "type": "string",
+      "description": "fixed | superseded | invalid | expired; cb restricts to that enum via extension."
+    },
+    "summary": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Task during which the note was made, if any."
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/plan",
+  "title": "claude-broker base plan",
+  "description": "A worker proposes its approach before touching code, when the task asks for a plan (task.plan_required). Posted on the status channel; the orchestrator answers with a plan-decision.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject",
+    "body"
+  ],
+  "properties": {
+    "type": {
+      "const": "plan"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task key. Namespaces constrain the format via a manifest extension (e.g. cb-YYYY-MM-DD-<slug>)."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity (worker name, 'orchestrator', ...)."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Addressee: a worker name, 'orchestrator', or '*' for broadcast."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline, readable in the summary projection."
+    },
+    "refs": {
+      "type": "array",
+      "description": "Message ids, task_ids, commit shas, URLs."
+    },
+    "body": {
+      "type": "object",
+      "required": [
+        "approach",
+        "steps",
+        "files"
+      ],
+      "properties": {
+        "approach": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How the worker intends to solve the task."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ordered implementation steps."
+        },
+        "files": {
+          "type": "object",
+          "required": [
+            "read",
+            "write"
+          ],
+          "properties": {
+            "read": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Files the worker will read."
+            },
+            "write": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Files the worker will modify; must sit inside the task files.write."
+            }
+          },
+          "description": "Files the plan touches."
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What could go wrong."
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Points the worker needs decided before or during implementation."
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

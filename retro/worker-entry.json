@@ -1,0 +1,12 @@
+{
+  "name": "retro",
+  "ns": "cb",
+  "args": [
+    "workers/retro",
+    "--repo-root",
+    "/path/to/claude-broker",
+    "--inbox-channel",
+    "cb-retro"
+  ],
+  "model": "claude-haiku-4-5-20251001"
+}

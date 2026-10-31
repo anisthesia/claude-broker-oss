@@ -1,0 +1,147 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/task",
+  "title": "claude-broker base task envelope",
+  "description": "A unit of work dispatched into a worker inbox (or the orchestrator inbox in some namespaces). Base holds only fields common to every namespace; per-namespace rules (task_id format, required body, brand, ...) are manifest extensions.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "const": "task"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task key. Namespaces constrain the format via a manifest extension (e.g. cb-YYYY-MM-DD-<slug>)."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity (worker name, 'orchestrator', ...)."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Addressee: a worker name, 'orchestrator', or '*' for broadcast."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline, readable in the summary projection."
+    },
+    "body": {
+      "description": "Free-form payload. Namespaces may constrain it via manifest extensions."
+    },
+    "refs": {
+      "type": "array",
+      "description": "Message ids, task_ids, commit shas, URLs."
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Why this task exists."
+    },
+    "background": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deeper context: prior decisions, related tasks, what failed before."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3
+      },
+      "description": "'<task_id>:<worker>' entries that must have a type:result on the status channel first."
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Files the worker may read."
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Only files the worker may modify."
+        }
+      },
+      "description": "Per-task file scope."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "run",
+          "pass_condition"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string",
+            "description": "Exact shell command."
+          },
+          "pass_condition": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Executable checks the worker runs before posting a result."
+    },
+    "required_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Legacy check labels; superseded by checks."
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Deliverables the worker confirms before posting a result."
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Per-task do-NOT rules."
+    },
+    "scope": {
+      "enum": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "description": "small <30 min, medium 30-90 min, large >90 min (expect rotation)."
+    },
+    "plan_required": {
+      "type": "boolean",
+      "description": "true = the worker posts a type:plan on the status channel and waits for a plan-decision before changing files."
+    },
+    "result_template": {
+      "type": "object",
+      "description": "Skeleton for the result body."
+    }
+  },
+  "additionalProperties": true
+}

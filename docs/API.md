@@ -1,0 +1,150 @@
+# API Reference
+
+The broker exposes two surfaces:
+
+1. **MCP tools** — over `POST /mcp` (Streamable HTTP). This is what agent sessions use.
+2. **HTTP endpoints** — plain REST/JSON, for health checks, lightweight polling, the dashboard, and worker control.
+
+All authenticated requests carry `Authorization: Bearer <SHARED_SECRET>`.
+
+---
+
+## Message model
+
+Every message is a row: `{ id, channel, sender, content, created_at }`. `id` is a
+monotonically increasing integer per broker — clients track "last seen id" and ask for
+everything after it. `content` is an arbitrary string (commonly JSON-as-string). Channels are
+created implicitly on first write; there is no separate "create channel" step.
+
+---
+
+## MCP tools
+
+### Messaging
+
+| Tool | Purpose |
+|---|---|
+| `send_message` | Post one message to a channel. |
+| `send_message_batch` | Post many messages in one call (atomic; aborts on schema failure). |
+| `read_messages` | Read messages on a channel with `id` greater than `since_id`. |
+| `read_last` | Read the most recent N messages on a channel. |
+
+`read_messages`, `read_last` and `turn_start` accept `projection: "summary"`, which replaces each message body with its headline envelope fields (`type`, `task_id`, `from`, `to`, `subject`, `summary`, `bytes`) so an orchestrator can scan a long channel cheaply and then fetch only the messages it needs in full.
+| `has_messages` | Cheap check: are there messages after `since_id`? Returns counts only. |
+| `wait_for_messages` | **Server-side long-poll** (up to 60s). Returns as soon as a matching message arrives, or on timeout. Prefer this over busy-polling `read_messages`. Supports `filter_type`. |
+| `delete_message` | Delete a single message by id. |
+| `get_latest_per_sender` | One most-recent message per distinct sender on a channel. |
+| `post_gated_message` | Post a message only once a set of dependency task-ids have posted results (dependency gate). |
+
+### Results
+
+| Tool | Purpose |
+|---|---|
+| `check_result` | Look up the latest `type:result` message for a `task_id` on a channel. |
+| `check_results_batch` | Same, for up to 50 task-ids in one call. Returns `results` (task_id → found) and `summaries` (task_id → latest result summary or null). |
+
+### Channel management
+
+| Tool | Purpose |
+|---|---|
+| `list_channels` | List channels with message counts and last-activity. |
+| `purge_channel` | Delete all (or older-than-`older_than_ms`) messages on a channel. Refuses channels in `PRUNE_EXEMPT` unless `force: true`. |
+| `purge_channels_by_prefix` | Purge every channel whose name starts with a prefix. Skips `PRUNE_EXEMPT`. |
+
+### Schemas
+
+| Tool | Purpose |
+|---|---|
+| `register_channel_schema` | Attach a JSON Schema to a channel. `strict: true` rejects non-conforming messages; `strict: false` (default) logs a warning only. Optional `version` string. Omitting `strict` or `version` on re-registration keeps the channel's current values, so a schema refresh never silently downgrades a strict channel. |
+| `get_channel_schema` | Fetch the schema registered on a channel. |
+| `list_channel_schemas` | List all channels that have a schema. |
+| `clear_channel_schema` | Remove a channel's schema. |
+
+Schemas are stored in SQLite and hot-reloaded — no restart needed.
+
+### Capabilities (service discovery)
+
+| Tool | Purpose |
+|---|---|
+| `register_capability` | Advertise that a worker provides a named capability. |
+| `list_capabilities` | Discover who provides what. |
+| `deregister_capability` | Withdraw a capability. |
+
+### Heartbeats & telemetry
+
+| Tool | Purpose |
+|---|---|
+| `upsert_heartbeat` | Post/replace a worker's heartbeat (keeps one row per worker). |
+| `get_latest_heartbeats` | Current heartbeat per worker, with an `online`/`offline` flag driven by `WORKER_OFFLINE_THRESHOLD_S`. |
+| `turn_start` | Convenience call an agent makes at the start of a turn: reads its inbox and the control channel in one round-trip and reports whether a `rotate` was requested. It does not post a heartbeat — use `upsert_heartbeat` for that. |
+
+### Sprint / coordination helpers
+
+| Tool | Purpose |
+|---|---|
+| `sprint_summary` | Roll up dispatched/completed/failed/pending task counts for a status channel. Counts distinct `task_id`s; a task is judged by its latest result, so a retry that passes after a FAIL is one completed task. For `<ns>-status` the dispatched count covers `<ns>-*` inbox channels; for a bare `status` it covers every channel. |
+| `sprint_file_conflicts` | Detect workers touching overlapping files (from result metadata). |
+| `open_questions` | List `type: question` messages under a namespace prefix that have no later reply on the asker's inbox and no self-posted result — surfaces blocked workers at orchestrator turn-start. |
+| `get_task_ledger` | One row per task for a namespace, derived server-side: every `type: task` dispatched into `<ns>-*` inboxes joined with the latest result, latest status/handoff and any open question per `task_id`. `state` is `pending`, `in-progress` (a status was posted), `handoff` (the status carries `body.handoff_notes` or is `type: handoff`), `blocked` (open question), or `done` / `failed` / `skipped` from the latest result's summary prefix. Results with no dispatch are listed with `dispatched_at: null`. `only_open=true` drops finished rows; `since_id` bounds the dispatch scan; `prefix` and `workers` let a cluster orchestrator whose status channel is `<ns>-<cluster>-status` scan the `<ns>-*` inboxes for its own workers only. Replaces rebuilding the orchestrator's ledger from `read_messages`. |
+
+### Protocol v3 tools
+
+Eight tools added in v3 (`V3_TOOLS`, `lib/profiles.js:60`). They are **hidden from connections that send no
+`role`** (the pre-v3 34-tool list) and visible with a `?role=` or `role=admin`. Design and errors:
+[protocol-v3.md](protocol-v3.md).
+
+| Tool | Purpose |
+|---|---|
+| `adopt_namespace` | **Admin only** (in no role profile). Opt a namespace in to v3 identity: watchdogs started afterwards send `role=` and key on `as`. `dry_run` reports and writes nothing; adopt/revert need `admin_token` = the broker's `ADMIN_SECRET`. 409 without a manifest. Same as `POST /namespaces/:ns/adopt`. |
+| `register_namespace` | Register or replace a namespace manifest (JSON string); validates messages on its channels against the base protocol plus the manifest. Warn-only unless `strict`. Hot-reloads. |
+| `get_namespace` | The manifest registered for a namespace, with which channels are active vs shadowed by a v2 schema; omit `ns` to list namespaces and base types. |
+| `get_message` | One message by id, or just the JSON value at `path` (e.g. `body.commits[0].sha`). Does not move cursors. |
+| `dispatch_task` | Post a `type: task` to a worker's manifest inbox (orchestrator). |
+| `post_result` | Post a `type: result` to `<ns>-status`; fills `type`/`from`/`to` and the task's `subject`. |
+| `ask` | Post a `type: question` to `<ns>-status`; the task shows `blocked` until answered. |
+| `post_note` | Post a `finding` / `decision` / `resolved` to `<ns>-notes`. |
+
+### Connection identity: `/mcp?role=&ns=&as=`
+
+The MCP URL may carry `role` (`worker`, `reviewer`, `orchestrator`, `admin`), `ns` and `as`
+(`[A-Za-z0-9_.-]{1,64}`; defaults for `ns` and `sender`/`from` on the typed tools). A role limits
+`tools/list` to its profile and refuses calls outside it (measured: worker/reviewer 19 tools, orchestrator
+29, admin 42; no `role` = the 34-tool pre-v3 list, whatever `ns`/`as` say). A bad value is a `400` with
+JSON-RPC `-32602`. Profiles and sizes: [protocol-v3.md](protocol-v3.md#role-profiles).
+
+### Worker supervision (opt-in)
+
+Active only when `WORKERS_CONFIG` / `WATCHDOG_BIN` are set. See
+[DEPLOYMENT.md](DEPLOYMENT.md#worker-supervision).
+
+| Tool | Purpose |
+|---|---|
+| `list_workers` | List configured workers and their running state. |
+| `start_worker` | Spawn a worker's supervisor process (or tmux window). Optional `model` override. |
+| `stop_worker` | Stop a worker (SIGTERM to its process group / kill its tmux window). |
+| `register_worker` | Add/update a worker entry in `WORKERS_CONFIG`. Name must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. |
+| `deregister_worker` | Remove a worker entry (must be stopped first). |
+
+---
+
+## HTTP endpoints
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| `GET /health` | none | Liveness probe: `{ ok, ts, uptime_s }`. |
+| `GET /metrics` | bearer | In-memory counters since start: messages inserted, DB rows, long-poll totals, per-tool call/error/latency stats, per-route hit counts. |
+| `POST /mcp` | bearer | The MCP transport endpoint (stateless Streamable HTTP). `GET`/`DELETE /mcp` return a JSON-RPC-shaped 405. |
+| `GET /inbox?channel=&since_id=[&wait_ms=]` | bearer | Lightweight pre-check: `{ pending, count, max_id }`. With `wait_ms` (max 60000) it long-polls and returns as soon as a message lands. |
+| `POST /inbox/batch` | bearer | Same, for many channels in one body `{ "channel": since_id, ... }`. |
+| `POST /messages` | bearer | Post a message over plain REST (body `{ channel, sender, content }`). |
+| `GET /cost` | bearer or `?token=` | Aggregated session-cost rollup from `TELEMETRY_CHANNEL` and every `*-telemetry` channel. |
+| `GET /rate-limits` | bearer or `?token=` | Rate-limit event log from `RATE_LIMIT_CHANNEL` and every `*-rate-limits` channel. |
+| `GET /workers` | bearer | Configured workers + running state (JSON). |
+| `POST /namespaces/:ns/adopt` | bearer + `admin_token` | Adopt (or `revert`) a namespace for v3; body `{ dry_run?, revert?, admin_token? }` or `X-Admin-Token`. `dry_run` needs no token. 403 bad/missing token, 503 no `ADMIN_SECRET`, 409 no manifest. |
+| `POST /workers/:name/start` | bearer | Start a worker. |
+| `POST /workers/:name/stop` | bearer | Stop a worker. |
+| `GET /dashboard` | bearer or `?token=` | HTML dashboard. |
+| `GET /dashboard/channel` | bearer or `?token=` | HTML view of one channel. |
+
+> `/health` is intentionally public so external supervisors/load balancers can probe it without
+> credentials. Every other endpoint requires the secret when one is configured.

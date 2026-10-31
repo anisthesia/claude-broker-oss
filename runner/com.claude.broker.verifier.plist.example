@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Standalone verifier for one namespace (docs/protocol-v3.md "Verifier credential").
+  Runs verify-result.mjs --watch outside every worker's process tree and is the only holder of
+  VERIFIER_TOKEN. Copy per namespace, fill in the CHANGE-ME values, then:
+    cp runner/com.claude.broker.verifier.plist.example ~/Library/LaunchAgents/com.claude.broker.verifier.cb.plist
+    chmod 600 ~/Library/LaunchAgents/com.claude.broker.verifier.cb.plist   # it holds two secrets
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude.broker.verifier.cb.plist
+  Logs: one JSON line per cycle on stdout, details on stderr. It idles until the broker's /health
+  verifier_trust lists the namespace, so installing it before the broker enforces is safe.
+  Same-uid limit: as a LaunchAgent it runs as your user, like the worker sessions, so they can read the token
+  (ps eww, this file). Run it as a separate user (LaunchDaemon + UserName) to close that (docs/protocol-v3.md).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claude.broker.verifier.cb</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/CHANGE-ME/.nvm/versions/node/v20.20.2/bin/node</string>
+    <string>/Users/CHANGE-ME/claude-broker-oss/verify-result.mjs</string>
+    <string>--watch</string>
+    <string>60000</string>
+    <string>--status-channel</string>
+    <string>cb-status</string>
+    <!-- a checkout that shares the workers' git object store (the main checkout their worktrees hang off),
+         or one with an 'origin' remote they push to; 'git fetch origin' runs before each pass (a failure is
+         only logged). A separate clone the workers do not push to has none of their commits: every result
+         is then stamped ENV commit-missing, never verified. -->
+    <string>--repo</string>
+    <string>/Users/CHANGE-ME/claude-broker-oss</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BROKER_URL</key>
+    <string>http://localhost:8080</string>
+    <key>BROKER_SECRET</key>
+    <string>CHANGE-ME (= the broker's SHARED_SECRET)</string>
+    <key>VERIFIER_TOKEN</key>
+    <string>CHANGE-ME (openssl rand -hex 32; its sha256 goes in the broker's VERIFIER_TOKEN_SHA256)</string>
+    <!-- node for the checks: the one better-sqlite3 in node_modules was built for -->
+    <key>VERIFY_NODE_BIN</key>
+    <string>/Users/CHANGE-ME/.nvm/versions/node/v20.20.2/bin/node</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/CHANGE-ME/claude-broker-oss/worker-logs/verifier-cb.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/CHANGE-ME/claude-broker-oss/worker-logs/verifier-cb.err.log</string>
+</dict>
+</plist>

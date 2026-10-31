@@ -1,0 +1,313 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/manifest",
+  "title": "claude-broker namespace manifest",
+  "version": "3.0",
+  "description": "Declares one namespace on top of the server-owned base protocol (schemas/base/*.json): who its workers are, which channels exist, which message types each channel accepts, and how the namespace narrows or extends the base types. Replaces the per-namespace copies of setup-schemas-<ns>.js and schemas/<ns>-*.json for namespaces that opt in.",
+  "type": "object",
+  "required": [
+    "ns",
+    "workers",
+    "channels"
+  ],
+  "properties": {
+    "ns": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,15}$",
+      "description": "Namespace prefix without the dash, e.g. 'cb'. Channels are '<ns>-<name>'."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^3\\.\\d+$",
+      "description": "Base protocol version this manifest targets."
+    },
+    "strict": {
+      "type": "boolean",
+      "default": false,
+      "description": "Namespace default enforcement: false = warn-only, true = reject. Per-channel 'strict' overrides. Flips need orchestrator authorization."
+    },
+    "closed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Namespace default: reject fields not declared by base, extension or the common envelope. Per-channel and per-type 'closed' override."
+    },
+    "roles": {
+      "type": "object",
+      "description": "Role-level extensions, applied when the envelope's 'from' is a worker with that role (workers[].role). summary_prefixes is the one place a manifest may widen base: base result.summary is a pattern (PASS|FAIL|SKIP) that ANDed fragments cannot widen, so the loader rebuilds the pattern from base + the sender role's list (cb-notes #168904). extensions are ANDed for senders with that role.",
+      "propertyNames": {
+        "enum": [
+          "orchestrator",
+          "worker",
+          "reviewer"
+        ]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "summary_prefixes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z_-]*$"
+            },
+            "description": "Extra result summary prefixes accepted besides PASS/FAIL/SKIP, e.g. APPROVE, ADVISE, BLOCK."
+          },
+          "extensions": {
+            "$ref": "#/properties/extensions"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "workers": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Sessions in this namespace. Drives inbox routing, capability registration and role-scoped tool lists.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "inbox",
+          "role"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Worker id as used in 'from' / 'to'."
+          },
+          "inbox": {
+            "type": "string",
+            "description": "Channel the worker reads, '<ns>-<name>'."
+          },
+          "role": {
+            "enum": [
+              "orchestrator",
+              "worker",
+              "reviewer"
+            ],
+            "description": "Selects the tool list and which channels the worker may write."
+          },
+          "mode": {
+            "enum": [
+              "hold"
+            ],
+            "description": "\"hold\" = hold-only (e.g. a judge that never answers): the broker lets this sender write only type:judgment with verdict \"held\" on <ns>-notes, type:status on <ns>-status, and <ns>-telemetry / <ns>-rate-limits, and refuses every other write (lib/messages.js holdRefusal). Absent = no restriction."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "channels": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "types"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*-[a-z0-9-]+$"
+          },
+          "kind": {
+            "enum": [
+              "worker-inbox",
+              "orchestrator-inbox",
+              "control",
+              "status",
+              "telemetry",
+              "backlog",
+              "notes"
+            ],
+            "description": "Role of the channel; the server derives retention (backlog/notes are prune-exempt), sender rules and defaults from it."
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "minItems": 1,
+            "description": "Message types accepted: base types and/or local_types names."
+          },
+          "strict": {
+            "type": "boolean"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "extensions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "description": "Tightens a base type (or defines a namespace-local type) for this namespace. Every fragment is ANDed with schemas/base/<type>.json, so an extension can only narrow, never widen.",
+              "properties": {
+                "required": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true,
+                  "description": "Extra required top-level fields."
+                },
+                "properties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "object",
+                      "boolean"
+                    ]
+                  },
+                  "description": "JSON Schema fragments per field, ANDed with the base definition (e.g. a task_id pattern, a maxLength, an enum, a nested required list)."
+                },
+                "enums": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "array",
+                    "minItems": 1
+                  },
+                  "description": "Sugar for properties.<field>.enum."
+                },
+                "patterns": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Sugar for properties.<field>.pattern (regex source)."
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true,
+                  "description": "Exact allow-list of top-level fields; implies closed and replaces the base/extension property union. For types that share an envelope but must not carry the base type's optional fields."
+                },
+                "closed": {
+                  "type": "boolean",
+                  "description": "Overrides the channel/namespace 'closed': true rejects fields not declared by base, the extension or common envelope fields."
+                },
+                "allOf": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  },
+                  "description": "Conditional rules (if/then) applied after the type is selected, e.g. 'sprint-start requires sprint_id'."
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "Per-channel overrides, merged over the namespace-level extensions for the same type."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "local_types": {
+      "type": "object",
+      "description": "Namespace-local message types with no base schema (e.g. 'rotate', 'sprint-start'). Unless envelope:false, the common envelope \u2014 type, task_id, from, to, subject, optional body/refs \u2014 is implied and the entry adds to it.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "envelope": {
+            "type": "boolean",
+            "default": true,
+            "description": "false = do not imply the common envelope (retrospective-style free-form records); then required must list everything."
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "properties": {
+            "type": "object"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "allOf": {
+            "type": "array"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Namespace-wide per-type extensions. Keys are base types (task, result, status, question, finding, decision, resolved, heartbeat, deferred, deferred-resolved, approval-token) or local_types names. Key 'deferred' covers both deferred and deferred-resolved (one base file).",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Tightens a base type (or defines a namespace-local type) for this namespace. Every fragment is ANDed with schemas/base/<type>.json, so an extension can only narrow, never widen.",
+        "properties": {
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "description": "Extra required top-level fields."
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "object",
+                "boolean"
+              ]
+            },
+            "description": "JSON Schema fragments per field, ANDed with the base definition (e.g. a task_id pattern, a maxLength, an enum, a nested required list)."
+          },
+          "enums": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 1
+            },
+            "description": "Sugar for properties.<field>.enum."
+          },
+          "patterns": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Sugar for properties.<field>.pattern (regex source)."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "description": "Exact allow-list of top-level fields; implies closed and replaces the base/extension property union. For types that share an envelope but must not carry the base type's optional fields."
+          },
+          "closed": {
+            "type": "boolean",
+            "description": "Overrides the channel/namespace 'closed': true rejects fields not declared by base, the extension or common envelope fields."
+          },
+          "allOf": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Conditional rules (if/then) applied after the type is selected, e.g. 'sprint-start requires sprint_id'."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

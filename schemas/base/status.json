@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/status",
+  "title": "claude-broker base status envelope",
+  "description": "Progress or lifecycle update. A status with body.handoff_notes rewinds the sender's inbox cursor so a replacement session resumes the task (see CLAUDE.md invariants).",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "const": "status"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task key. Namespaces constrain the format via a manifest extension (e.g. cb-YYYY-MM-DD-<slug>)."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity (worker name, 'orchestrator', ...)."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Addressee: a worker name, 'orchestrator', or '*' for broadcast."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline, readable in the summary projection."
+    },
+    "body": {
+      "description": "Status payload. body.handoff_notes (object {done, pending, files_touched, next_step}, or free text in older sessions) triggers the cursor rewind.",
+      "properties": {
+        "handoff_notes": {
+          "type": [
+            "object",
+            "string"
+          ]
+        }
+      }
+    },
+    "refs": {
+      "type": "array",
+      "description": "Message ids, task_ids, commit shas, URLs."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One-line state."
+    },
+    "affected_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Files touched so far."
+    }
+  },
+  "additionalProperties": true
+}

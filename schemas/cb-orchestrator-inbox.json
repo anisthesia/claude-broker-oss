@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "claude-broker cb-orchestrator-inbox envelope",
+  "description": "Messages sent into the infra-orchestrator inbox — escalations, questions, and notes from workers.",
+  "type": "object",
+  "required": ["type", "task_id", "from", "to", "subject"],
+  "properties": {
+    "type": {
+      "enum": ["question", "note", "status"]
+    },
+    "task_id": { "type": "string", "minLength": 3 },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sending worker: 'core' or 'protocol-qa'."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Should be 'orchestrator' or 'infra-orch'."
+    },
+    "subject": { "type": "string", "minLength": 3 },
+    "body": {},
+    "refs": { "type": "array" }
+  },
+  "additionalProperties": false
+}

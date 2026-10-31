@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "claude-broker cb-held envelope",
+  "description": "Tasks parked by the orchestration loop while their depends_on is unmet (held-task, body.task carries the full task envelope verbatim) and the release records the loop writes when it dispatches them (held-release).",
+  "oneOf": [
+    {
+      "type": "object",
+      "title": "held-task",
+      "required": ["type", "task_id", "from", "to", "subject", "body"],
+      "properties": {
+        "type": { "const": "held-task" },
+        "task_id": { "type": "string", "minLength": 3 },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 3 },
+        "body": {
+          "type": "object",
+          "required": ["task"],
+          "properties": {
+            "task": { "type": "object", "description": "The full task envelope, verbatim." },
+            "waiting_on": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": true
+        },
+        "refs": { "type": "array" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "title": "held-release",
+      "required": ["type", "task_id", "released_at", "target_channel"],
+      "properties": {
+        "type": { "const": "held-release" },
+        "task_id": { "type": "string", "minLength": 3 },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 3 },
+        "released_at": { "type": "string", "minLength": 10, "description": "ISO-8601 timestamp." },
+        "target_channel": { "type": "string", "minLength": 1 },
+        "body": { "type": "object" },
+        "refs": { "type": "array" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

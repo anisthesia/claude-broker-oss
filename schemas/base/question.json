@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "claude-broker/base/question",
+  "title": "claude-broker base question envelope",
+  "description": "A worker blocked on an answer. Surfaced by open_questions until a later message on the asker's inbox references the task_id.",
+  "version": "3.0",
+  "type": "object",
+  "required": [
+    "type",
+    "task_id",
+    "from",
+    "to",
+    "subject"
+  ],
+  "properties": {
+    "type": {
+      "const": "question"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Unique task key. Namespaces constrain the format via a manifest extension (e.g. cb-YYYY-MM-DD-<slug>)."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender identity (worker name, 'orchestrator', ...)."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Addressee: a worker name, 'orchestrator', or '*' for broadcast."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Headline, readable in the summary projection."
+    },
+    "body": {
+      "description": "Free-form payload. Namespaces may constrain it via manifest extensions."
+    },
+    "refs": {
+      "type": "array",
+      "description": "Message ids, task_ids, commit shas, URLs."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The question in one line."
+    },
+    "affected_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Files the question concerns."
+    }
+  },
+  "additionalProperties": true
+}
